@@ -13,20 +13,23 @@
 //
 // Touch: buttons as drawn; long-press |<< / >>| seeks -/+10 s; tap the progress
 // bar to jump there; tap the time to cycle elapsed / remaining / both; tap the
-// title to open the library; in the List skin, tap a row to play it and use the
-// arrows beside the list to page (hold one to jump to the start or end).
+// title to open the library, hold it to star the song; in the List skin, tap a
+// row to play it and use the arrows beside the list to page (hold one to jump
+// to the start or end).
 
 #include "ui.h"
 #include "display.h"
 #include "theme.h"
 #include "audio.h"
 #include "bt.h"
+#include "speaker.h"
 #include "background.h"
 #include "storage.h"
 #include "settings.h"
 #include "titles.h"
 #include "layouts.h"
 #include "tracklist.h"
+#include "playlist.h"
 
 static const Icon BUTTON_ICONS[PB_COUNT] = {
   ICON_GEAR, ICON_PREV, ICON_PLAY, ICON_NEXT, ICON_VOL_DOWN, ICON_VOL_UP
@@ -105,6 +108,14 @@ static void drawTitle() {
 
 static void drawStatus() {
   const Palette& p = theme();
+  // The chip says where the sound is going as well as how loud. On the
+  // speaker route that is settled -- there is nothing to connect to -- so the
+  // icon is simply lit.
+  if (g_settings.outRoute == OUT_SPEAKER) {
+    ui_chip(L->status, ICON_SPEAKER, speaker_active() ? p.accent : p.dim,
+            String(audio_volume()) + "%", p.band);
+    return;
+  }
   const uint16_t btCol = bt_connected() ? p.accent : (bt_connecting() ? p.warn : p.dim);
   ui_chip(L->status, ICON_BLUETOOTH, btCol, String(audio_volume()) + "%", p.band);
 }
@@ -115,7 +126,9 @@ static void drawTime() {
   const Palette& p = theme();
   const Rect& T = L->time;
   const uint32_t pos = audio_positionMs(), dur = audio_durationMs();
-  const String track = String(audio_currentTrack() + 1) + "/" + String(storage_trackCount());
+  // Place in the list being played; "-" for a song picked from outside it.
+  const int at = audio_queuePos(audio_currentTrack());
+  const String track = (at >= 0 ? String(at + 1) : String("-")) + "/" + String(audio_queueLen());
   String left, right;
   switch (g_settings.timeMode) {
     case TIME_ELAPSED:
@@ -229,8 +242,8 @@ static void tick(uint32_t now) {
     if (has(L->list)) {
       // Keep the playing track on the page and its highlight current.
       const int rows = tracklist_rows(L->list, L->listRowH);
-      const int cur = audio_currentTrack();
-      if (cur < listTop || cur >= listTop + rows)
+      const int cur = audio_currentTrack(), at = audio_queuePos(cur);
+      if (at < listTop || at >= listTop + rows)
         listTop = tracklist_topFor(L->list, L->listRowH, cur);
       drawList();
     }
@@ -266,7 +279,9 @@ static void tick(uint32_t now) {
     shownPlaying = audio_isPlaying();
     drawButton(PB_PLAY);
   }
-  const int btState = bt_connected() ? 2 : (bt_connecting() ? 1 : 0);
+  const int btState = g_settings.outRoute == OUT_SPEAKER
+                        ? (speaker_active() ? 4 : 3)
+                        : (bt_connected() ? 2 : (bt_connecting() ? 1 : 0));
   if (btState != shownBt || audio_volume() != shownVolume) {
     shownBt = btState;
     shownVolume = audio_volume();
@@ -291,7 +306,7 @@ static void touch(TouchEvent ev, int x, int y) {
       const bool up = L->listUp.contains(x, y);
       if (ev == TOUCH_LONG_PRESS) {
         const int before = listTop;
-        listTop = tracklist_clampTop(L->list, L->listRowH, up ? 0 : storage_trackCount());
+        listTop = tracklist_clampTop(L->list, L->listRowH, up ? 0 : audio_queueLen());
         if (listTop != before) drawList();
       } else if (ev == TOUCH_TAP) {
         pageList(up);
@@ -308,6 +323,14 @@ static void touch(TouchEvent ev, int x, int y) {
   }
 
   if (ev == TOUCH_LONG_PRESS) {
+    // Hold the title: star or unstar the song.
+    if (L->title.contains(x, y) && storage_trackCount()) {
+      const int cur = audio_currentTrack();
+      const bool full = playlist_favouritesFull() && !playlist_isFavourite(cur);
+      const bool on = playlist_toggleFavourite(cur);
+      ui_toast(full ? T_FAV_FULL : on ? T_FAV_ADDED : T_FAV_REMOVED, 1500);
+      return;
+    }
     if (B[PB_PREV].contains(x, y)) audio_seekRelative(-10);
     else if (B[PB_NEXT].contains(x, y)) audio_seekRelative(10);
     return;

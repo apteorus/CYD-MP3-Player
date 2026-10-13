@@ -36,6 +36,15 @@ void audio_setRepeat(uint8_t mode);    // RepeatMode from settings.h
 bool    audio_shuffle();
 uint8_t audio_repeat();
 
+// Play from a list of library indices (playlist.h) instead of every track.
+// `tracks` is kept, not copied: nullptr means the whole library. The order is
+// rebuilt around `keepTrack`; when that song is not in the list and `jump` is
+// set, the list starts, otherwise the song plays on and next starts the list.
+void audio_setQueue(const uint16_t* tracks, int n, int keepTrack, bool jump);
+int  audio_queueLen();
+int  audio_queueTrack(int pos);       // list position -> library index, or -1
+int  audio_queuePos(int track);       // library index -> list position, or -1
+
 bool     audio_isPlaying();
 int      audio_currentTrack();
 uint8_t  audio_volume();

@@ -1,4 +1,5 @@
 #include "settings.h"
+#include "speaker.h"        // OutRoute
 #include <Preferences.h>
 
 Settings g_settings;
@@ -20,11 +21,14 @@ void settings_begin() {
   s.style      = prefs.getUChar ("style",  s.style);
   s.lang       = prefs.getUChar ("lang",   s.lang) % LANG_COUNT;
   s.volume     = min<uint8_t>(prefs.getUChar("vol", s.volume), 100);
+  s.outRoute   = prefs.getUChar ("out",    s.outRoute) % OUT_ROUTE_COUNT;
   s.lastTrack  = prefs.getUShort("track",  s.lastTrack);
   s.lastPosMs  = prefs.getULong ("pos",    s.lastPosMs);
   s.timeMode   = prefs.getUChar ("timeMode", s.timeMode) % TIME_MODE_COUNT;
   s.shuffle    = prefs.getBool  ("shuffle", s.shuffle);
   s.repeat     = prefs.getUChar ("repeat", s.repeat) % REPEAT_MODE_COUNT;
+  s.srcKind    = prefs.getUChar ("srcKind", s.srcKind);
+  s.srcKey     = prefs.getULong ("srcKey", s.srcKey);
   s.bgIndex    = prefs.getUChar ("bg",     s.bgIndex);
   s.btName     = prefs.getString("btName", s.btName);
   prefs.getBytes("btAddr", s.btAddr, sizeof(s.btAddr));
@@ -36,15 +40,16 @@ void settings_begin() {
   }
   s.wifiSsid   = prefs.getString("ssid",   s.wifiSsid);
   s.wifiPass   = prefs.getString("pass",   s.wifiPass);
+  s.webPin     = prefs.getString("webPin", s.webPin);
   prefs.end();
 
   // The WiFi password is never printed: serial logs end up in bug reports.
   Serial.printf("settings: theme %u skin %u style %u lang %u  wifi \"%s\"\n", s.theme, s.skin,
                 s.style, s.lang, s.wifiSsid.c_str());
   Serial.printf("settings: panel %u invert %d rot %u bright %u%%  vol %u resume %u@%lus "
-                "shuffle %d repeat %u time %u bg %u  speaker \"%s\"\n",
+                "shuffle %d repeat %u time %u bg %u  out %u  speaker \"%s\"\n",
                 s.panel, s.invert, s.rotation, s.brightness, s.volume, s.lastTrack,
-                s.lastPosMs / 1000, s.shuffle, s.repeat, s.timeMode, s.bgIndex,
+                s.lastPosMs / 1000, s.shuffle, s.repeat, s.timeMode, s.bgIndex, s.outRoute,
                 s.btName.c_str());
   // The address as well as the name: the library keeps its OWN record of the
   // last device for its boot reconnect, and when the two disagree the player
@@ -70,11 +75,14 @@ void settings_save() {
   prefs.putUChar ("style",    s.style);
   prefs.putUChar ("lang",     s.lang);
   prefs.putUChar ("vol",      s.volume);
+  prefs.putUChar ("out",      s.outRoute);
   prefs.putUShort("track",    s.lastTrack);
   prefs.putULong ("pos",      s.lastPosMs);
   prefs.putUChar ("timeMode", s.timeMode);
   prefs.putBool  ("shuffle",  s.shuffle);
   prefs.putUChar ("repeat",   s.repeat);
+  prefs.putUChar ("srcKind",  s.srcKind);
+  prefs.putULong ("srcKey",   s.srcKey);
   prefs.putUChar ("bg",       s.bgIndex);
   prefs.putString("btName",   s.btName);
   prefs.putBytes ("btAddr",   s.btAddr, sizeof(s.btAddr));
@@ -82,6 +90,7 @@ void settings_save() {
   prefs.putUChar ("knownN",   s.btKnownCount);
   prefs.putString("ssid",     s.wifiSsid);
   prefs.putString("pass",     s.wifiPass);
+  prefs.putString("webPin",   s.webPin);
   prefs.end();
 }
 

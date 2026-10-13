@@ -4,6 +4,9 @@
 #include "i18n.h"
 #include "theme.h"
 #include "style.h"
+#ifndef CYD_UPLOADER
+#include "playlist.h"
+#endif
 #include <SD.h>
 #include <esp_rom_crc.h>
 #include <vector>
@@ -89,8 +92,12 @@ static String doneStamp() {
   i18n_forEachChinese(crcOne);
   for (int i = 0; i < theme_count(); i++) crcOne(theme_at(i).nameZh);
   for (int i = 0; i < style_count(); i++) crcOne(style_at(i).nameZh);
-  char b[20];
-  snprintf(b, sizeof(b), "%08x%08x", storage_libraryCrc(), uiCrc);
+  uint32_t listCrc = 0;
+#ifndef CYD_UPLOADER
+  listCrc = playlist_namesCrc();
+#endif
+  char b[28];
+  snprintf(b, sizeof(b), "%08x%08x%08x", storage_libraryCrc(), uiCrc, listCrc);
   return b;
 }
 
@@ -112,6 +119,12 @@ static void collectUiText(const char* text) {
   if (!SD.exists(pathFor(keyFor(s)))) pending->push_back(s);
 }
 
+// Folder and playlist names: only the ones the built-in font cannot draw.
+static void collectName(const char* text) {
+  for (const char* c = text; *c; c++)
+    if ((uint8_t)*c >= 0x80) { collectUiText(text); return; }
+}
+
 bool titles_prepareAll(TitleProgressFn progress) {
   if (!SD.exists(STRIP_DIR)) SD.mkdir(STRIP_DIR);
   if (upToDate()) return true;
@@ -122,6 +135,9 @@ bool titles_prepareAll(TitleProgressFn progress) {
   i18n_forEachChinese(collectUiText);
   for (int i = 0; i < theme_count(); i++) collectUiText(theme_at(i).nameZh);
   for (int i = 0; i < style_count(); i++) collectUiText(style_at(i).nameZh);
+#ifndef CYD_UPLOADER
+  playlist_forEachName(collectName);
+#endif
   pending = nullptr;
   if (missing.empty()) { markDone(); return true; }
 

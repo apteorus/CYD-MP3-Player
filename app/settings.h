@@ -49,11 +49,19 @@ struct Settings {
 
   // Player
   uint8_t  volume     = 40;                 // 0-100
+  // Where the sound comes out: OUT_SPEAKER / OUT_BT (speaker.h). The on-board
+  // speaker by default, so a board that has never been paired makes a noise.
+  uint8_t  outRoute   = 0;                  // OUT_SPEAKER
   uint16_t lastTrack  = 0;                  // resume point: track index...
   uint32_t lastPosMs  = 0;                  // ...and position in it
   uint8_t  timeMode   = TIME_ELAPSED;
   bool     shuffle    = false;
   uint8_t  repeat     = REPEAT_ALL;
+  // What is being played from (playlist.h): SourceKind, and a checksum of the
+  // folder or playlist path -- not its position in the list, which moves when
+  // a folder is added.
+  uint8_t  srcKind    = 0;                  // SRC_ALL
+  uint32_t srcKey     = 0;
 
   // Background: 0 = off, N = /bg/bgN.gif
   uint8_t  bgIndex    = 1;
@@ -71,10 +79,14 @@ struct Settings {
   BtKnown  btKnown[BT_KNOWN_MAX];
   uint8_t  btKnownCount = 0;
 
-  // WiFi, used only by upload mode. Entered on a phone through the hotspot's
-  // page, never compiled in.
+  // WiFi, used only by upload mode. Entered on a
+  // phone through the hotspot's page, never compiled in.
   String   wifiSsid;
   String   wifiPass;
+
+  // The 6-digit passcode in front of every WiFi page (auth.h). Not forced to
+  // change: Setup shows it, and resets it, on the device itself.
+  String   webPin     = "000000";
 };
 
 extern Settings g_settings;

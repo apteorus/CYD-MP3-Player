@@ -18,7 +18,7 @@ enum Icon : uint8_t {
   ICON_NONE, ICON_PREV, ICON_PLAY, ICON_PAUSE, ICON_NEXT,
   ICON_VOL_DOWN, ICON_VOL_UP, ICON_GEAR, ICON_BLUETOOTH, ICON_BACK, ICON_NOTE,
   ICON_SHUFFLE, ICON_REPEAT, ICON_REPEAT_ONE, ICON_UP, ICON_DOWN, ICON_LIST,
-  ICON_CHEVRON
+  ICON_CHEVRON, ICON_SPEAKER, ICON_STAR, ICON_FOLDER
 };
 
 // Which face a piece of chrome is set in. The style resolves each to a
@@ -133,7 +133,7 @@ String ui_time(uint32_t ms, bool known = true);
 // ---------------------------------------------------------------------------
 // Screens
 // ---------------------------------------------------------------------------
-enum ScreenId : uint8_t { SCR_PLAYER, SCR_SETUP, SCR_BLUETOOTH, SCR_LIBRARY, SCR_COUNT };
+enum ScreenId : uint8_t { SCR_PLAYER, SCR_SETUP, SCR_BLUETOOTH, SCR_LIBRARY, SCR_SOURCES, SCR_COUNT };
 
 // What a finger is doing right now, for feedback while it is down. Gestures
 // (TouchEvent) are classified on release; this is everything before that.
@@ -151,7 +151,7 @@ struct Screen {
   bool (*press)(PressPhase phase, int x, int y);
 };
 
-extern const Screen SCREEN_PLAYER, SCREEN_SETUP, SCREEN_BLUETOOTH, SCREEN_LIBRARY;
+extern const Screen SCREEN_PLAYER, SCREEN_SETUP, SCREEN_BLUETOOTH, SCREEN_LIBRARY, SCREEN_SOURCES;
 
 void     ui_go(ScreenId id);          // leave the current screen, enter this one
 ScreenId ui_current();

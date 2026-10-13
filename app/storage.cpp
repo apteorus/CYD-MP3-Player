@@ -158,7 +158,7 @@ bool storage_mount() {
     Serial.println("sd: mount failed");
     return false;
   }
-  for (const char* dir : { "/music", "/bg", "/.sys" })
+  for (const char* dir : { "/music", "/bg", "/playlists", "/.sys" })
     if (!SD.exists(dir)) SD.mkdir(dir);
   return true;
 }

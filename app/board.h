@@ -171,10 +171,42 @@
 
 // ---- Other on-board peripherals -------------------------------------------
 #define CYD_LDR_PIN     34  // ADC1, light sensor (brighter = lower reading)
-#define CYD_RGB_R_PIN    4  // on-board RGB LED, all three ACTIVE LOW
+// GPIO4 IS SHARED: it is the red LED *and* the amplifier's shutdown line.
+// See CYD_AMP_ENABLE_PIN below before touching it. Driving it HIGH to turn the
+// LED off also mutes the speaker.
+#define CYD_RGB_R_PIN    4  // on-board RGB LED, all three ACTIVE LOW -- and the amp enable
 #define CYD_RGB_G_PIN   16
 #define CYD_RGB_B_PIN   17
-#define CYD_SPEAKER_PIN 26  // DAC2, drives the small speaker pad
+// The on-board amplifier and speaker pad (CN1 / P3) hang off GPIO26, which is
+// the ESP32's second DAC. speaker.cpp drives it through the dac_continuous
+// driver, one channel only: GPIO25 is the other DAC, and on this board it is
+// the touch controller's clock -- so the I2S built-in-DAC mode, which claims
+// both pins, is not available here.
+#define CYD_SPEAKER_PIN      26  // DAC2, drives the small speaker pad
+#define CYD_SPEAKER_DAC_MASK DAC_CHANNEL_MASK_CH1   // GPIO26; CH0 would be GPIO25
+
+// THE AMPLIFIER'S SHUTDOWN LINE, AND WHY THE SPEAKER WAS SILENT FOR SO LONG
+//
+// The 8002E is held in shutdown unless GPIO4 is driven LOW. Floating counts as
+// shutdown, so a sketch that never touches GPIO4 gets silence, and so does one
+// that drives it HIGH -- which is exactly what cydRgbLedOff() did, on the first
+// line of setup(), to stop the red LED glowing. The player muted its own
+// amplifier on every boot, and nothing downstream of that could make a sound:
+// not the DAC, not the DMA, not even the DAC's own hardware cosine oscillator.
+//
+// GPIO4 IS THE RED LED AS WELL, and the LED is active LOW too. There is no
+// arrangement in which the amplifier runs and the red LED is dark -- they are
+// the same pin and the same polarity. The trade is therefore unavoidable, and
+// the player makes it the narrow way: speaker.cpp enables the amp only while
+// the DAC is actually running, so the red LED is lit while sound is playing
+// through the speaker and dark the rest of the time. On the Bluetooth route it
+// never comes on at all.
+//
+// Found by holding a tone on GPIO26 and walking every other pin: GPIO4 LOW
+// sounded three times out of three, GPIO16 none out of three. Boards sold under
+// this part number vary, so if a different one is silent, suspect this pin
+// first and re-run that sweep before suspecting the firmware.
+#define CYD_AMP_ENABLE_PIN 4        // ACTIVE LOW. Same pin as CYD_RGB_R_PIN.
 
 // ---------------------------------------------------------------------------
 // Small runtime helpers (Arduino only)
@@ -197,6 +229,11 @@ inline void cydBacklightOff() {
 
 // Park the on-board RGB LED. It is active LOW, so it powers up glowing white
 // and washes out the panel's colours if left alone.
+//
+// Driving the red channel HIGH also puts the amplifier into shutdown, because
+// they are the same pin (CYD_AMP_ENABLE_PIN). That is the right state at boot:
+// silent until something asks for sound. speaker.cpp takes GPIO4 back when the
+// DAC starts and returns it here when the DAC stops.
 inline void cydRgbLedOff() {
   pinMode(CYD_RGB_R_PIN, OUTPUT);
   pinMode(CYD_RGB_G_PIN, OUTPUT);
@@ -204,6 +241,21 @@ inline void cydRgbLedOff() {
   digitalWrite(CYD_RGB_R_PIN, HIGH);
   digitalWrite(CYD_RGB_G_PIN, HIGH);
   digitalWrite(CYD_RGB_B_PIN, HIGH);
+}
+
+// The on-board amplifier. ACTIVE LOW, and the same pin as the red LED, so
+// enabling the amp lights the red LED -- see CYD_AMP_ENABLE_PIN above.
+inline void cydAmpEnable() {
+  pinMode(CYD_AMP_ENABLE_PIN, OUTPUT);
+  digitalWrite(CYD_AMP_ENABLE_PIN, LOW);
+}
+
+// Shutdown. Leaves the pin driven HIGH rather than floating: a floating GPIO4
+// is also shutdown, but it lets the red LED glow at whatever the leakage
+// decides, which looks like a fault.
+inline void cydAmpDisable() {
+  pinMode(CYD_AMP_ENABLE_PIN, OUTPUT);
+  digitalWrite(CYD_AMP_ENABLE_PIN, HIGH);
 }
 
 // Identification banner, printed at the top of every sketch so
@@ -226,6 +278,8 @@ inline void cydPrintBanner() {
                 CYD_TOUCH_CS_PIN, CYD_TOUCH_IRQ_PIN);
   Serial.printf("sd      : MOSI%d MISO%d SCK%d CS%d (VSPI)\n",
                 CYD_SD_MOSI_PIN, CYD_SD_MISO_PIN, CYD_SD_SCK_PIN, CYD_SD_CS_PIN);
+  Serial.printf("speaker : GPIO%d (DAC), amp enable GPIO%d active LOW (= red LED)\n",
+                CYD_SPEAKER_PIN, CYD_AMP_ENABLE_PIN);
 }
 
 #endif  // ARDUINO

@@ -24,6 +24,8 @@ BOARD_TARGETS=(
   stage0/s03_mp3_sd_bt
   stage0/s04_gif_mp3_bt
   stage0/s05_bg_convert
+  stage0/s06_dac_tone
+  stage0/s07_speaker_hunt
   app
 )
 

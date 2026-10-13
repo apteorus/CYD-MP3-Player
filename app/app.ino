@@ -31,10 +31,13 @@
 #include "background.h"
 #include "audio.h"
 #include "bt.h"
+#include "speaker.h"
 #include "ui.h"
 #include "titles.h"
+#include "playlist.h"
 #include "uploadmode.h"
 #include "firmware.h"
+#include <esp_system.h>
 
 // The loop task (which also runs setup: calibration, title rendering) measured
 // 2.8 KB of its default 8 KB stack in use. 5 KB keeps a wide margin and hands
@@ -83,6 +86,24 @@ static void centreMessage(const char* line1, const char* line2, uint16_t colour)
   if (line2) {
     tft.setTextColor(p.dim, p.bg);
     tft.drawString(line2, tft.width() / 2, tft.height() / 2 + 18, 2);
+  }
+}
+
+// Where to pick up. Normally the saved track and position; but if the last run
+// ended in a crash or a watchdog reset, that spot may be what crashed it (one
+// MP3 wedged the decoder at its resume point and the board reset on every
+// boot), so start the NEXT track from its beginning instead.
+static void resumePoint(int& track, uint32_t& ms) {
+  const int count = storage_trackCount();
+  const bool resumable = g_settings.lastTrack < count;
+  track = resumable ? g_settings.lastTrack : 0;
+  ms = resumable ? g_settings.lastPosMs : 0;
+  const esp_reset_reason_t why = esp_reset_reason();
+  if (why == ESP_RST_PANIC || why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT ||
+      why == ESP_RST_WDT) {
+    Serial.printf("boot: last run crashed (reason %d) -- skipping track %d\n", (int)why, track);
+    track = count ? (track + 1) % count : 0;
+    ms = 0;
   }
 }
 
@@ -153,21 +174,27 @@ void loop() {}
     delay(2000);
   }
 
+  // Folders and playlists first: their names are rendered with the titles.
+  playlist_begin();
   // Both need RAM only available before Bluetooth starts: see the header.
   titles_prepareAll(titleProgress);
   bg_convertAll(conversionProgress);
   Serial.printf("heap before audio + bt: %u  largest %u\n",
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
-  // Resume where the last session stopped. A card whose library changed may
-  // have a different song at that index -- the position is then meaningless,
-  // so only the index is kept.
-  const bool resumable = g_settings.lastTrack < storage_trackCount();
-  audio_begin(resumable ? g_settings.lastTrack : 0, resumable ? g_settings.lastPosMs : 0,
-              g_settings.volume, g_settings.shuffle, g_settings.repeat);
+  // Resume where the last session stopped (resumePoint above).
+  int track;
+  uint32_t ms;
+  resumePoint(track, ms);
+  audio_begin(track, ms, g_settings.volume, g_settings.shuffle, g_settings.repeat);
+  playlist_restore(track);
   bt_begin();
+  speaker_begin(g_settings.outRoute);
 
-  const bool needSpeaker = bt_pairingBoot() || bt_speakerName().isEmpty();
+  // Only the Bluetooth route has anything to set up before it can play; the
+  // on-board speaker just works, so it lands on the player.
+  const bool needSpeaker = g_settings.outRoute == OUT_BT &&
+                           (bt_pairingBoot() || bt_speakerName().isEmpty());
   ui_go(needSpeaker ? SCR_BLUETOOTH : SCR_PLAYER);
 }
 
@@ -217,8 +244,8 @@ void loop() {
     uint32_t frames, avgMs, maxMs, maxBytes;
     bg_takeStats(frames, avgMs);
     bg_takeMax(maxMs, maxBytes);
-    Serial.printf("diag: sd read max %u ms  bg frame max %u ms %u KB\n",
-                  audio_takeMaxReadMs(), maxMs, maxBytes / 1024);
+    Serial.printf("diag: sd read max %u ms  bg frame max %u ms %u KB  dac stalls %u\n",
+                  audio_takeMaxReadMs(), maxMs, maxBytes / 1024, speaker_stalls());
     Serial.printf("stat: heap %u min %u largest %u  stacks dec %u loop %u  buf %u%% underruns %u req %d  "
                   "bg %d %u.%u fps %u ms  %s  %s\n",
                   ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap(),
@@ -226,7 +253,9 @@ void loop() {
                   audio_bufferPct(), audio_underruns(), audio_maxRequest(),
                   bg_current(), frames * 1000 / (now - lastStat),
                   (frames * 10000 / (now - lastStat)) % 10, avgMs,
-                  bt_connected() ? "bt" : "no-bt",
+                  g_settings.outRoute == OUT_SPEAKER
+                    ? (speaker_active() ? "spk" : "spk-off")
+                    : (bt_connected() ? "bt" : "no-bt"),
                   audio_isPlaying() ? "playing" : "paused");
     lastStat = now;
   }

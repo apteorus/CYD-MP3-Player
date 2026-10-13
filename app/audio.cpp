@@ -162,12 +162,16 @@ static bool parseHeader(const uint8_t* p, FrameHdr& h) {
   return h.length > 4;
 }
 
+// Scratch for reading ahead in a file: the duration and the frame search.
+// Both run only in the decode task, so one buffer serves both.
+static uint8_t scan[4096];
+
 // Duration from the Xing/Info or VBRI header when there is one (exact, and the
 // only right answer for VBR), else from the bitrate and the file size.
 static uint32_t computeDuration(File& f) {
-  static uint8_t buf[4096];
+  uint8_t* buf = scan;
   f.seek(dataStart);
-  const int n = f.read(buf, sizeof(buf));
+  const int n = f.read(buf, sizeof(scan));
   for (int i = 0; i + 4 <= n; i++) {
     FrameHdr h;
     if (!parseHeader(buf + i, h)) continue;
@@ -230,6 +234,27 @@ static uint32_t byteForMs(uint32_t ms) {
   return dataStart;
 }
 
+// A jump by time lands at a byte worked out from the bitrate, almost never on
+// a frame boundary. The bytes there can look like a header that is not one,
+// and one such false start was enough to wedge libhelix in a loop it never
+// returned from -- the decode task, at priority 5, then starved everything
+// else on its core until the watchdog reset the board, on every boot, because
+// the resume point sends it straight back there. So move forward to a header
+// that is followed by another one, the same test computeDuration() trusts.
+static uint32_t alignToFrame(uint32_t pos) {
+  uint8_t* buf = scan;
+  if (pos <= dataStart) return dataStart;
+  file.seek(pos);
+  const int n = file.read(buf, 2048);
+  for (int i = 0; i + 4 <= n; i++) {
+    FrameHdr h, next;
+    if (!parseHeader(buf + i, h)) continue;
+    if (i + h.length + 4 > n || !parseHeader(buf + i + h.length, next)) continue;
+    return pos + i;
+  }
+  return pos;          // nothing convincing nearby: let the decoder look further
+}
+
 static bool openTrack(int index, uint32_t startMs) {
   const int count = storage_trackCount();
   if (count == 0) return false;
@@ -252,7 +277,7 @@ static bool openTrack(int index, uint32_t startMs) {
   bitrateKbps = 0;
   durationMs = computeDuration(file);
   if (startMs >= durationMs && durationMs > 0) startMs = 0;
-  file.seek(startMs ? byteForMs(startMs) : dataStart);
+  file.seek(startMs ? alignToFrame(byteForMs(startMs)) : dataStart);
   posBaseMs = startMs;
   framesPlayed = 0;
   trackSerial++;
@@ -268,7 +293,7 @@ static void seekTo(uint32_t ms) {
   starting = true;
   requestFlush();
   resetDecoder();                             // mid-stream bit reservoir is invalid now
-  file.seek(byteForMs(ms));
+  file.seek(alignToFrame(byteForMs(ms)));
   posBaseMs = ms;
   framesPlayed = 0;
 }
@@ -325,29 +350,45 @@ static void decodeTask(void*) {
 // Play order (UI task only)
 // ---------------------------------------------------------------------------
 static uint16_t* order = nullptr;             // play position -> track index
-static int       orderPos = 0;
+static int       orderPos = 0;                // -1: playing a song outside the queue
 static int       orderLen = 0;
+// The list being played (playlist.h), in list order. nullptr: every track.
+static const uint16_t* queue = nullptr;
+
+static int queueAt(int pos) { return queue ? queue[pos] : pos; }
+
+static int queueFind(int track) {
+  if (!queue) return (track >= 0 && track < orderLen) ? track : -1;
+  for (int i = 0; i < orderLen; i++)
+    if (queue[i] == track) return i;
+  return -1;
+}
 static bool      shuffleOn = false;
 static uint8_t   repeatMode = REPEAT_ALL;
 static uint32_t  seenEnded = 0, seenFail = 0;
 static int       failStreak = 0;
 
-// Current track first, the rest in random order.
+// The queue in list order, or shuffled with `firstTrack` first. A first track
+// outside the queue leaves orderPos at -1: next then starts the list.
 static void buildOrder(bool shuffled, int firstTrack) {
-  for (int i = 0; i < orderLen; i++) order[i] = i;
+  for (int i = 0; i < orderLen; i++) order[i] = queueAt(i);
+  const int first = queueFind(firstTrack);
   if (!shuffled || orderLen < 2) {
-    orderPos = constrain(firstTrack, 0, orderLen - 1);
+    orderPos = first;
     return;
   }
-  order[0] = firstTrack;
-  order[firstTrack] = 0;
-  for (int i = orderLen - 1; i > 1; i--) {
-    const int j = 1 + esp_random() % i;
+  if (first > 0) {
+    order[first] = order[0];
+    order[0] = firstTrack;
+  }
+  const int from = first >= 0 ? 1 : 0;           // keep the first in place
+  for (int i = orderLen - 1; i > from; i--) {
+    const int j = from + esp_random() % (i - from + 1);
     const uint16_t tmp = order[i];
     order[i] = order[j];
     order[j] = tmp;
   }
-  orderPos = 0;
+  orderPos = first >= 0 ? 0 : -1;
 }
 
 static void request(int track, uint32_t startMs = 0) {
@@ -384,6 +425,7 @@ static void advance(bool trackFinished) {
 void audio_begin(int startTrack, uint32_t startMs, uint8_t volume, bool shuffle, uint8_t repeat) {
   rb = (int16_t*)malloc(RB_FRAMES * 2 * sizeof(int16_t));
   orderLen = storage_trackCount();
+  // Sized for the whole library: a playlist's queue is never longer.
   order = (uint16_t*)malloc(max(1, orderLen) * sizeof(uint16_t));
   volumePct = min<uint8_t>(volume, 100);
   shuffleOn = shuffle;
@@ -414,7 +456,7 @@ void audio_tick() {
 
 void audio_playTrack(int index) {
   if (orderLen == 0) return;
-  index = constrain(index, 0, orderLen - 1);
+  index = constrain(index, 0, storage_trackCount() - 1);
   for (int i = 0; i < orderLen; i++)
     if (order[i] == index) { orderPos = i; break; }
   playing = true;
@@ -431,7 +473,7 @@ void audio_prev() {
   if (orderLen == 0) return;
   failStreak = 0;
   if (audio_positionMs() > 3000) { request(curTrack); return; }
-  orderPos = (orderPos + orderLen - 1) % orderLen;
+  orderPos = orderPos <= 0 ? orderLen - 1 : orderPos - 1;
   request(order[orderPos]);
 }
 
@@ -449,6 +491,22 @@ void audio_setShuffle(bool on) {
   shuffleOn = on;
   buildOrder(on, curTrack);
 }
+
+void audio_setQueue(const uint16_t* tracks, int n, int keepTrack, bool jump) {
+  if (n <= 0) return;
+  queue = tracks;
+  orderLen = min(n, storage_trackCount());
+  buildOrder(shuffleOn, keepTrack);
+  if (orderPos < 0 && jump) {
+    orderPos = 0;
+    failStreak = 0;
+    request(order[0]);
+  }
+}
+
+int audio_queueLen()             { return orderLen; }
+int audio_queueTrack(int pos)    { return (pos >= 0 && pos < orderLen) ? queueAt(pos) : -1; }
+int audio_queuePos(int track)    { return queueFind(track); }
 
 void audio_setRepeat(uint8_t mode) { repeatMode = mode % REPEAT_MODE_COUNT; }
 bool    audio_shuffle()            { return shuffleOn; }

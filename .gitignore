@@ -68,3 +68,10 @@ Thumbs.db
 /music/
 /bg/
 /sdcard/
+
+# ---------------------------------------------------------------------------
+# Enclosure design files
+# ---------------------------------------------------------------------------
+# The Retro Radio Case is kept alongside the firmware but not in its history.
+/Retro Radio Case/
+/Retro Radio Case.zip

@@ -3,6 +3,7 @@
 // ===========================================================================
 //   /music   MP3s, subfolders allowed (two levels deep)
 //   /bg      background GIFs, bg1.gif, bg2.gif, ...
+//   /playlists  .m3u playlists (playlist.h)
 //   /.sys    files the firmware owns: library index, title strips, frames
 //
 // Names starting with '.' are skipped everywhere: a Mac writes "._name.mp3"

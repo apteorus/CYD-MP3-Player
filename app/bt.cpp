@@ -3,6 +3,7 @@
 
 #include "bt.h"
 #include "audio.h"
+#include "speaker.h"
 #include "settings.h"
 #include "BluetoothA2DPSource.h"
 #include <esp_attr.h>
@@ -289,6 +290,14 @@ static void handleSpeakerKey(uint8_t key) {
 // Frame is {int16_t channel1, channel2}, packed: the interleaved layout
 // audio_pull fills.
 static int32_t onData(Frame* frames, int32_t count) {
+  // Only one consumer may pull from the ring (speaker.h). When the owner has
+  // routed audio to the on-board speaker the link stays up and carries
+  // silence: tearing the A2DP stack down and back up for a menu tap is a far
+  // bigger risk than 44 KB/s of zeroes.
+  if (speaker_route() != OUT_BT) {
+    memset(frames, 0, count * sizeof(Frame));
+    return count;
+  }
   audio_pull((int16_t*)frames, count);
   return count;
 }

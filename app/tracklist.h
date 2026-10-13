@@ -7,11 +7,14 @@
 
 #include "geometry.h"
 
-// Draw the rows of `region` starting at track `top`; the playing track is lit.
+// Rows are positions in the list being played (audio_queue*), so `top` is a
+// position, while hits and topFor speak in library track indices.
+//
+// Draw the rows of `region` starting at position `top`; the playing track is lit.
 void tracklist_draw(const Rect& region, int rowH, int top);
 void tracklist_drawRow(const Rect& region, int rowH, int top, int row);
 
-// Track index under (x, y), or -1.
+// Library track index under (x, y), or -1.
 int  tracklist_hit(const Rect& region, int rowH, int top, int x, int y);
 
 int  tracklist_rows(const Rect& region, int rowH);

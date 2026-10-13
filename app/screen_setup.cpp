@@ -18,18 +18,19 @@
 #include "calibrate.h"
 #include "storage.h"
 #include "bt.h"
+#include "speaker.h"
 #include "audio.h"
 #include "layouts.h"
 #include "firmware.h"
 
 enum Row : uint8_t {
-  ROW_BLUETOOTH, ROW_UPLOAD, ROW_THEME, ROW_STYLE, ROW_LAYOUT, ROW_BACKGROUND, ROW_ORIENTATION,
+  ROW_OUTPUT, ROW_BLUETOOTH, ROW_UPLOAD, ROW_PIN, ROW_THEME, ROW_STYLE, ROW_LAYOUT, ROW_BACKGROUND, ROW_ORIENTATION,
   ROW_BRIGHTNESS, ROW_LANGUAGE, ROW_INVERT, ROW_PANEL, ROW_CALIBRATE, ROW_ABOUT,
   ROW_COUNT
 };
 
 static const Txt ROW_LABELS[ROW_COUNT] = {
-  T_BLUETOOTH_SPEAKER, T_UPLOAD_MUSIC, T_THEME, T_STYLE, T_LAYOUT, T_BACKGROUND, T_ORIENTATION,
+  T_AUDIO_OUT, T_BLUETOOTH_SPEAKER, T_UPLOAD_MUSIC, T_WEB_PIN, T_THEME, T_STYLE, T_LAYOUT, T_BACKGROUND, T_ORIENTATION,
   T_BRIGHTNESS, T_LANGUAGE, T_INVERT, T_PANEL, T_CALIBRATE, T_ABOUT,
 };
 
@@ -55,6 +56,8 @@ static Rect downRect() {
 // What each row's value is, and therefore what tapping it will do (ui.h).
 static RowValue rowValue(Row r) {
   switch (r) {
+    case ROW_OUTPUT:
+      return ui_cycle(g_settings.outRoute == OUT_BT ? T_BLUETOOTH : T_SPEAKER);
     case ROW_BLUETOOTH:
       return ui_nav(bt_speakerName().length() ? bt_speakerName() : String(tr(T_NONE)));
     case ROW_THEME:
@@ -80,6 +83,8 @@ static RowValue rowValue(Row r) {
     case ROW_PANEL:      return ui_nav(String(display_panelName(g_settings.panel)));
     case ROW_CALIBRATE:  return ui_nav();
     case ROW_UPLOAD:     return ui_nav();
+    // Shown in full: holding the device is what entitles you to it.
+    case ROW_PIN:        return ui_nav(g_settings.webPin);
     case ROW_ABOUT: {
       char b[40];
       snprintf(b, sizeof(b), "v" FIRMWARE_VERSION "  %d  %u KB", storage_trackCount(), ESP.getFreeHeap() / 1024);
@@ -131,6 +136,11 @@ static void switchPanel() {
   ESP.restart();
 }
 
+static void resetPin() {
+  g_settings.webPin = "000000";
+  settings_save();
+}
+
 static void touch(TouchEvent ev, int x, int y) {
   if (ev != TOUCH_TAP) return;
   if (UI_BACK_RECT.contains(x, y)) { ui_go(SCR_PLAYER); return; }
@@ -146,6 +156,12 @@ static void touch(TouchEvent ev, int x, int y) {
   if (r < 0 || r >= ROW_COUNT) return;
 
   switch ((Row)r) {
+    case ROW_OUTPUT:
+      // The switch itself parks one consumer before it starts the other, so
+      // it takes a moment; the row is redrawn after, with the route settled.
+      g_settings.outRoute = (g_settings.outRoute + 1) % OUT_ROUTE_COUNT;
+      speaker_setRoute(g_settings.outRoute);
+      break;
     case ROW_BLUETOOTH:
       ui_go(SCR_BLUETOOTH);
       return;
@@ -159,6 +175,9 @@ static void touch(TouchEvent ev, int x, int y) {
       g_settings.lastPosMs = audio_positionMs();
       settings_saveResume();
       firmware_bootUploader();          // restarts
+      return;
+    case ROW_PIN:
+      ui_confirm(T_PIN_RESET_Q, T_PIN_RESET_1, T_PIN_RESET_2, T_RESET, resetPin);
       return;
     case ROW_THEME:
       g_settings.theme = (g_settings.theme + 1) % theme_count();

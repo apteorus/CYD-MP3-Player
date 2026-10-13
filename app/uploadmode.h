@@ -14,10 +14,8 @@
 //     page by itself. Uploading works over the hotspot too -- no home network
 //     needed at all -- and the page's WiFi tab saves a home network.
 //
-// The page has no password. Anyone on the same network (or near enough to
-// join the hotspot) while upload mode is on can manage the card's files --
-// the same trade the weather clock makes for its settings page. It is only
-// reachable while the owner has deliberately put the player in this mode.
+// Every page and API sits behind the 6-digit web passcode, one session at a
+// time (auth.h). The hotspot network itself stays open.
 #pragma once
 
 #include <Arduino.h>

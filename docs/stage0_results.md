@@ -155,3 +155,73 @@ Frame differencing (format 2) on the owner's four GIFs:
 
 Converting bg4 with the canvas allocated took the heap down to 10.5 KB, so the
 allocation now stops with 48 KB free and falls back to whole frames.
+
+
+---
+
+# The on-board speaker (2026-09-28)
+
+Measured with the standalone test project in `../CYD Speaker Test`, which carries
+the full evidence trail in its `FINDINGS.md`. Two Stage 0 sketches preceded it,
+`s06_dac_tone` and `s07_speaker_hunt`; **s06's original conclusion was wrong** and
+its header has been corrected.
+
+## The amplifier is enabled by GPIO4, active LOW
+
+The speaker route shipped silent. Not quiet — silent, including from the DAC's own
+hardware cosine oscillator, which uses no CPU, no DMA and no clock configuration.
+s06 read that as proof the firmware was innocent and the hardware at fault.
+
+The hardware was fine. A board photo showed a populated 8002E (1 W, 8 Ω,
+bridge-tied load) with the documented resistor values — `203`/`103`/`472`, so not
+the variant that ships R7/R8 as 0 Ω links and distorts — and a speaker correctly
+wired across the output with neither side grounded. A replacement speaker changed
+nothing.
+
+GPIO4 holds the amplifier in shutdown unless driven LOW. Floating counts as
+shutdown, so every test sketch was silent too. GPIO4 is also `CYD_RGB_R_PIN`, and
+`cydRgbLedOff()` drives it HIGH in the first line of `setup()`.
+
+Found by holding a tone on GPIO26 and driving each other pin in turn, bisecting on
+"anything audible in this batch" rather than on when — the walk cannot be driven
+interactively over a serial link from another machine, but a yes/no per batch needs
+no timing judgement:
+
+| Round | Pins | Audible |
+|---|---|---|
+| 19 HIGH | all drivable pins | no |
+| 10 LOW | 25, 22, 27, 21, 17, 16, 4, 5, 0, 2 | **yes** |
+| 5 LOW | 25, 22, 27, 21, 17 | no |
+| 5 LOW | 16, 4, 5, 0, 2 | **yes** |
+| 4 LOW | 16, 4, 16, 4 | **yes, alternating** |
+| 3 LOW | 16, 16, 16 | no |
+| 3 LOW | 4, 4, 4 | **yes, three of three** |
+
+s07's sweep could never have found this: a square wave on a shutdown line toggles
+mute, silently.
+
+## `dac_continuous` write alignment
+
+`buf_size` 512, `desc_num` 6, requested 44100 Hz, write length swept:
+
+| Write length | Measured rate | Ratio |
+|---|---|---|
+| 256, 436, 440, 444, 448, 512, 768, 1024, 2048, 3072 | 44371 – 44790 | ~1.01 |
+| 442, 446 | 22717, 22723 | **0.52** |
+| 441, 443 | stalls, writes time out | deadlock |
+| 3074 (> `desc_num * buf_size`) | — | deadlock |
+
+32-bit DMA word alignment, independent of `chan_mode`, `clk_src` and frequency;
+`buf_size` must be aligned too (441 failed as a `buf_size` as well). The half-rate
+case is the dangerous one — everything plays an octave low and nothing reports it.
+
+`speaker.cpp`'s `CHUNK` of 256 was always correct. The anomalies came from the
+diagnostic's own `uint8_t buf[441]`, picked as "10 cycles of 1 kHz at 44100"
+without noticing it is odd. With a 420-byte buffer at 1050 Hz: `319 writes, 0
+failed, 44660 Hz`, every iteration, on both clock sources.
+
+## Unrelated, still open
+
+The board intermittently drops off USB — `[Errno 6] Device not configured`, then
+the device node disappears. Seen three times, including before any of these changes
+and while running stock sketches, so it is not the amplifier's current draw.

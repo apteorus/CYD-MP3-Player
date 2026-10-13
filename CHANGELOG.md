@@ -2,6 +2,77 @@
 
 What shipped. Why it was built that way is in [docs/decisions.md](docs/decisions.md).
 
+## 1.2.0 — 2026-10-02
+
+Playlists: Favourites, folders and `.m3u` lists, made and edited from a phone;
+and a passcode on the WiFi pages.
+
+### Added
+- **Web passcode.** Every page of upload mode asks for a 6-digit
+  passcode (000000 until changed on the WiFi tab). One signed-in browser at a
+  time; it frees up on Sign out or 2 minutes after the page is closed. After 3
+  wrong tries, the wait doubles from 30 s up to 15 min. **Setup ▸ Web
+  passcode** shows it on the player and resets it.
+- **Play from a playlist.** Tap the list name in Library's header to choose
+  from: All songs, ★ Favourites, any folder under `/music` (with its
+  subfolders), or an `.m3u` / `.m3u8` file in `/playlists`. The current song
+  keeps playing if it is in the new list. Shuffle, repeat, next / previous,
+  the List skin and the `3/12` counter all follow the list. The choice survives
+  a restart; if the folder or playlist has gone, it falls back to All songs.
+- **★ Favourites.** Hold a song in Library, or hold the title on the player,
+  to star or unstar it. Kept as paths in `/.sys/fav.txt`, so adding songs does
+  not move the stars. Up to 500.
+- **Playlist editor in upload mode.** The Playlists tab creates, renames and
+  deletes playlists. Search your songs by title, artist or folder, add one or
+  everything shown, reorder with ↑ ↓, and save. ★ Favourites can be edited the
+  same way. Entries the card no longer has are marked so they can be removed.
+  Existing `.m3u` files can still be uploaded. Their entries can be relative to
+  `/music` (`Artist/song.mp3`), relative to the playlist, or a PC path such as
+  `D:\Music\Artist\song.mp3`, and matching ignores case.
+
+### Fixed
+- **Reboot loop when resuming some songs.** Resuming (or seeking) jumps to a
+  byte worked out from the bitrate, which can land mid-frame; on one MP3 the
+  decoder library never returned from what it found there, and as the resume
+  point sent it back on every boot, the player reset forever. Jumps now move to
+  a real frame first. And after any crash or watchdog reset the player starts
+  the next song from the top instead of the spot it was on.
+- **"Upload music (WiFi" lost its closing bracket** in Setup: the label was
+  cut off by its row. The row is now just **Upload music**.
+
+## 1.1.2 — 2026-09-28
+
+Sound without a speaker to pair. The board has an amplifier and a speaker pad on
+GPIO26 that the firmware had never used, so a player with nothing paired was
+silent — and, because Bluetooth was the only thing draining the decoder, stuck.
+
+### Added
+- **The on-board speaker plays.** The board's own amplifier and speaker pad
+  (GPIO26) is now an output, and the default one: a board that has never been
+  paired makes a noise out of the box. Mono, from the ESP32's built-in DAC.
+- **Setup ▸ Audio out** chooses between Speaker and Bluetooth, mid-song. The
+  player's status chip shows which one is carrying the sound.
+
+### Fixed
+- **The speaker actually makes a sound.** The amplifier is held in shutdown
+  unless GPIO4 is driven LOW, and GPIO4 is also the red LED, which
+  `cydRgbLedOff()` drove HIGH on the first line of `setup()`. The player muted
+  its own amplifier on every boot, so the whole speaker route above was silent
+  — including the DAC's own hardware oscillator, which is what made it look
+  like a hardware fault. `speaker.cpp` now enables the amplifier while the DAC
+  is running.
+- **No thump when the speaker starts.** The DAC rests at 0 V until it is
+  written to, so the amplifier used to be switched on to a step from 0 V to
+  mid-rail. It now settles at mid-rail first; the existing ramp down on stop is
+  unchanged, and the mute now follows it.
+
+### Known
+- **The red LED lights while the speaker is playing.** GPIO4 is both the
+  amplifier's enable and the red channel of the RGB LED, active LOW in both
+  roles, so there is no arrangement in which the amplifier runs and the LED is
+  dark. It is lit only while sound is actually playing through the speaker, and
+  never on the Bluetooth route.
+
 ## 1.1.1 — 2026-09-20
 
 Bluetooth. Connecting to a car exposed a set of faults that a speaker never

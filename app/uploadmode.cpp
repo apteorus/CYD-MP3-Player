@@ -9,6 +9,7 @@
 #include <SD.h>
 #include "uploadmode.h"
 #include "upload_page.h"
+#include "auth.h"
 #include "settings.h"
 #include "display.h"
 #include "theme.h"
@@ -96,7 +97,8 @@ static void centreMessage(Txt line, uint16_t colour) {
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
-// Everything the page can touch is under /music or /bg (or the one font file).
+// Everything the page can touch is under /music, /bg or /playlists (or the one
+// font file).
 // No "..", no hidden names, no backslashes: a request can never reach /.sys's
 // converted frames, the library index, or anything outside the card's folders.
 static bool safeUnder(const String& path, const char* root) {
@@ -111,7 +113,7 @@ static bool safeUnder(const String& path, const char* root) {
 }
 
 static bool safeUserPath(const String& path) {
-  return safeUnder(path, "/music") || safeUnder(path, "/bg");
+  return safeUnder(path, "/music") || safeUnder(path, "/bg") || safeUnder(path, "/playlists");
 }
 
 // A file name from a browser: last path component, no control characters,
@@ -323,7 +325,10 @@ static void handleWifi() {
 
 static void handleDelete() {
   const String path = server.arg("path");
-  if (!safeUserPath(path) || path == "/music" || path == "/bg") { sendError("cannot delete that"); return; }
+  if (!safeUserPath(path) || path == "/music" || path == "/bg" || path == "/playlists") {
+    sendError("cannot delete that");
+    return;
+  }
   if (path.startsWith("/bg/")) {
     int k = 0;
     if (sscanf(path.c_str(), "/bg/bg%d.gif", &k) == 1 && k > 0) deleteBackground(k);
@@ -364,6 +369,96 @@ static void handleMkdir() {
   sendOk();
 }
 
+// ---- playlist editor -------------------------------------------------------
+// The page edits playlists itself: it needs every song (scanned now, so songs
+// uploaded a minute ago are there), their titles (the player's library index,
+// which may be older -- the page falls back to file names), and a playlist's
+// text to read and write. Favourites are the same kind of list, kept in /.sys.
+static const char* FAV_FILE  = "/.sys/fav.txt";
+static const char* INDEX_FILE = "/.sys/library.idx";
+static const size_t PLAYLIST_MAX = 120 * 1024;
+
+static void streamSongs(const String& dir, int depth, bool& first) {
+  File d = SD.open(dir);
+  if (!d || !d.isDirectory()) return;
+  for (File f = d.openNextFile(); f; f = d.openNextFile()) {
+    const String name = f.name();
+    if (!name.startsWith(".")) {
+      const String p = dir + "/" + name;
+      if (f.isDirectory()) {
+        if (depth < 2) streamSongs(p, depth + 1, first);   // as deep as the library goes
+      } else if (endsWithCI(name, ".mp3")) {
+        server.sendContent(String(first ? "\"" : ",\"") + jsonEscape(p.substring(7)) + "\"");
+        first = false;
+      }
+    }
+    f.close();
+  }
+  d.close();
+}
+
+static void handleSongs() {
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "application/json", "");
+  server.sendContent("{\"songs\":[");
+  bool first = true;
+  streamSongs("/music", 0, first);
+  server.sendContent("]}");
+  server.sendContent("");
+}
+
+static void streamText(const char* path) {
+  File f = SD.open(path);
+  if (!f || f.isDirectory()) { server.send(200, "text/plain; charset=utf-8", ""); return; }
+  server.streamFile(f, "text/plain; charset=utf-8");
+  f.close();
+}
+
+static void handleTitles() { streamText(INDEX_FILE); }
+
+// "fav", or a playlist file name -> where it lives. "" when it is not allowed.
+static String playlistPath(const String& name) {
+  if (name == "fav") return FAV_FILE;
+  const String clean = cleanName(name);
+  if (clean.isEmpty() || (!endsWithCI(clean, ".m3u") && !endsWithCI(clean, ".m3u8"))) return String();
+  const String p = "/playlists/" + clean;
+  return safeUnder(p, "/playlists") ? p : String();
+}
+
+static void handlePlaylistGet() {
+  const String path = playlistPath(server.arg("name"));
+  if (path.isEmpty()) { sendError("bad playlist name"); return; }
+  streamText(path.c_str());
+}
+
+// Save a playlist: name, text, and (when renaming) the old name.
+static void handlePlaylistSave() {
+  const String path = playlistPath(server.arg("name"));
+  const String old = server.hasArg("old") ? playlistPath(server.arg("old")) : String();
+  const String& text = server.arg("text");
+  if (path.isEmpty()) { sendError("bad playlist name"); return; }
+  if (text.length() > PLAYLIST_MAX) { sendError("playlist too long"); return; }
+  const bool renaming = old.length() && !old.equalsIgnoreCase(path);
+  if ((renaming || old.isEmpty()) && path != FAV_FILE && SD.exists(path)) {
+    sendError("that name is taken");
+    return;
+  }
+  // Written aside and renamed, so a dropped connection never leaves half a list.
+  const String tmp = path + ".part";
+  SD.remove(tmp);
+  File f = SD.open(tmp, FILE_WRITE);
+  if (!f) { sendError("cannot write to the card"); return; }
+  const bool ok = f.write((const uint8_t*)text.c_str(), text.length()) == text.length();
+  f.close();
+  if (!ok) { SD.remove(tmp); sendError("card full or write error"); return; }
+  SD.remove(path);
+  if (!SD.rename(tmp, path)) { sendError("could not save the playlist"); return; }
+  if (renaming) SD.remove(old);
+  cardUsedValid = false;
+  Serial.printf("upload: saved playlist %s (%u bytes)\n", path.c_str(), (unsigned)text.length());
+  sendOk(",\"name\":\"" + jsonEscape(path.substring(path.lastIndexOf('/') + 1)) + "\"");
+}
+
 static void handleDone() {
   sendOk();
   restartToPlayer = true;
@@ -386,6 +481,8 @@ static void handleUploadData() {
   if (up.status == UPLOAD_FILE_START) {
     upError = "";
     upTmp = upFinal = "";
+    // Answered by the guarded done-handler; here nothing is written.
+    if (!auth_ok()) { upError = "sign in"; return; }
     const String dir = server.arg("dir");
     const String name = cleanName(up.filename);
     if (dir == "/.sys") {
@@ -394,6 +491,9 @@ static void handleUploadData() {
     } else if (dir == "/bg") {
       if (!endsWithCI(name, ".gif")) { upError = "not a .gif"; return; }
       upFinal = "/bg/bg" + String(bgCount() + 1) + ".gif";
+    } else if (dir == "/playlists") {
+      if (!endsWithCI(name, ".m3u") && !endsWithCI(name, ".m3u8")) { upError = "not an .m3u playlist"; return; }
+      upFinal = dir + "/" + name;
     } else if (safeUnder(dir, "/music")) {
       if (!endsWithCI(name, ".mp3")) { upError = "not an .mp3"; return; }
       if (name.isEmpty()) { upError = "bad file name"; return; }
@@ -528,19 +628,24 @@ void uploadmode_run() {
 
   if (forceHotspot || !joinSavedNetwork()) startHotspot();
   web = new WebServer(80);
+  auth_begin(server);                       // the passcode, before any page
 
-  server.on("/",            HTTP_GET,  handleRoot);
-  server.on("/api/info",    HTTP_GET,  handleInfo);
-  server.on("/api/list",    HTTP_GET,  handleList);
-  server.on("/api/font",    HTTP_GET,  handleFont);
-  server.on("/api/scan",    HTTP_GET,  handleScan);
-  server.on("/file",        HTTP_GET,  handleFile);
-  server.on("/api/wifi",    HTTP_POST, handleWifi);
-  server.on("/api/delete",  HTTP_POST, handleDelete);
-  server.on("/api/rename",  HTTP_POST, handleRename);
-  server.on("/api/mkdir",   HTTP_POST, handleMkdir);
-  server.on("/api/done",    HTTP_POST, handleDone);
-  server.on("/api/upload",  HTTP_POST, handleUploadDone, handleUploadData);
+  server.on("/", HTTP_GET, auth_guard(handleRoot, true));
+  server.on("/api/info", HTTP_GET, auth_guard(handleInfo));
+  server.on("/api/list", HTTP_GET, auth_guard(handleList));
+  server.on("/api/font", HTTP_GET, auth_guard(handleFont));
+  server.on("/api/scan", HTTP_GET, auth_guard(handleScan));
+  server.on("/file", HTTP_GET, auth_guard(handleFile));
+  server.on("/api/wifi", HTTP_POST, auth_guard(handleWifi));
+  server.on("/api/delete", HTTP_POST, auth_guard(handleDelete));
+  server.on("/api/rename", HTTP_POST, auth_guard(handleRename));
+  server.on("/api/mkdir", HTTP_POST, auth_guard(handleMkdir));
+  server.on("/api/done", HTTP_POST, auth_guard(handleDone));
+  server.on("/api/songs", HTTP_GET, auth_guard(handleSongs));
+  server.on("/api/titles", HTTP_GET, auth_guard(handleTitles));
+  server.on("/api/playlist", HTTP_GET, auth_guard(handlePlaylistGet));
+  server.on("/api/playlist", HTTP_POST, auth_guard(handlePlaylistSave));
+  server.on("/api/upload", HTTP_POST, auth_guard(handleUploadDone), handleUploadData);
   server.onNotFound(handleNotFound);
   server.begin();
 
@@ -550,10 +655,9 @@ void uploadmode_run() {
     server.handleClient();
 
     int x, y;
-    if (touch_poll(&x, &y) == TOUCH_TAP) {
-      if (doneRect().contains(x, y)) restartNow(true);
-      else if (!apMode && hotspotRect().contains(x, y)) restartNow(false, true);
-    }
+    const TouchEvent ev = touch_poll(&x, &y);
+    if (ev == TOUCH_TAP && doneRect().contains(x, y)) restartNow(true);
+    else if (ev == TOUCH_TAP && !apMode && hotspotRect().contains(x, y)) restartNow(false, true);
     if (activityDirty) drawActivity();
     if (restartAt && millis() >= restartAt) restartNow(restartToPlayer);
     delay(2);

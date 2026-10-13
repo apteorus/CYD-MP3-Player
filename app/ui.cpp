@@ -56,6 +56,15 @@ void ui_icon(Icon icon, int cx, int cy, int s, uint16_t fg, uint16_t bg) {
       tft.fillCircle(cx, cy, r / 2, bg);
       break;
     }
+    case ICON_SPEAKER: {
+      // The cone the volume buttons use, with two strokes of sound instead of
+      // a +/-: this one says where the audio goes, not louder or quieter.
+      speaker(cx - s / 6, cy, s, fg);
+      const int wx = cx + s / 4;
+      tft.drawLine(wx, cy - s / 6, wx, cy + s / 6, fg);
+      tft.drawLine(wx + 3, cy - s / 3, wx + 3, cy + s / 3, fg);
+      break;
+    }
     case ICON_BLUETOOTH: {
       // The rune: a vertical stroke with two chevrons on the right.
       const int t = cy - h, b = cy + h, x0 = cx - h / 2, x1 = cx + h / 2;
@@ -115,6 +124,30 @@ void ui_icon(Icon icon, int cx, int cy, int s, uint16_t fg, uint16_t bg) {
       tft.fillTriangle(cx - h / 3, cy - h, cx + h / 2, cy, cx - h / 3, cy + h, fg);
       tft.fillTriangle(cx - h / 3 - 3, cy - h, cx + h / 2 - 3, cy, cx - h / 3 - 3, cy + h, bg);
       break;
+    case ICON_STAR: {
+      // Five tips and the pentagon between them, a triangle each.
+      int ox[5], oy[5], ix[5], iy[5];
+      for (int i = 0; i < 5; i++) {
+        const float a = -PI / 2 + i * 2 * PI / 5, b = a + PI / 5;
+        ox[i] = cx + lroundf(cosf(a) * h);
+        oy[i] = cy + lroundf(sinf(a) * h) + h / 8;
+        ix[i] = cx + lroundf(cosf(b) * h * 0.42f);
+        iy[i] = cy + lroundf(sinf(b) * h * 0.42f) + h / 8;
+      }
+      for (int i = 0; i < 5; i++) {
+        const int j = (i + 4) % 5;              // the inner point before this tip
+        tft.fillTriangle(ox[i], oy[i], ix[i], iy[i], ix[j], iy[j], fg);
+        tft.fillTriangle(cx, cy + h / 8, ix[i], iy[i], ix[j], iy[j], fg);
+      }
+      break;
+    }
+    case ICON_FOLDER: {
+      const int w = s, fh = s * 3 / 4, x = cx - w / 2, y = cy - fh / 2 + 1;
+      tft.fillRect(x, y - 2, w / 2, 3, fg);                  // the tab
+      tft.fillRect(x, y, w, fh, fg);
+      tft.drawFastHLine(x + 2, y + 3, w - 4, bg);
+      break;
+    }
     case ICON_LIST:
       for (int i = -1; i <= 1; i++) {
         tft.fillRect(cx - h, cy + i * h * 2 / 3 - 1, 3, 3, fg);
@@ -493,7 +526,7 @@ String ui_time(uint32_t ms, bool known) {
 // Screen switcher
 // ---------------------------------------------------------------------------
 static const Screen* SCREENS[SCR_COUNT] = { &SCREEN_PLAYER, &SCREEN_SETUP, &SCREEN_BLUETOOTH,
-                                            &SCREEN_LIBRARY };
+                                            &SCREEN_LIBRARY, &SCREEN_SOURCES };
 static ScreenId current = SCR_PLAYER;
 static bool     entered = false;
 
