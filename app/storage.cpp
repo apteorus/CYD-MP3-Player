@@ -10,7 +10,7 @@ static SPIClass sdSPI(VSPI);
 
 static const char* INDEX_PATH = "/.sys/library.idx";
 static const char* INDEX_TMP  = "/.sys/library.tmp";
-static const char* INDEX_MAGIC = "CYDLIB2";
+static const char* INDEX_MAGIC = "CYDLIB3";
 static const int   MAX_TRACKS = 2000;
 
 static uint32_t* offsets = nullptr;
@@ -20,11 +20,12 @@ static uint32_t  libraryCrc = 0;
 static SemaphoreHandle_t mutex = nullptr;
 static int    cacheIndex = -1;
 static String cachePath, cacheLabel;
+static Id3Info cacheInfo;
 
 // ---------------------------------------------------------------------------
 // Scan
 // ---------------------------------------------------------------------------
-struct Found { String path; uint32_t size; };
+struct Found { String path; uint32_t size, modified; };
 
 static void scanDir(const String& path, int depth, std::vector<Found>& out) {
   File d = SD.open(path);
@@ -38,7 +39,7 @@ static void scanDir(const String& path, int depth, std::vector<Found>& out) {
       } else {
         String low = p;
         low.toLowerCase();
-        if (low.endsWith(".mp3")) out.push_back({ p, (uint32_t)f.size() });
+        if (low.endsWith(".mp3")) out.push_back({ p, (uint32_t)f.size(), (uint32_t)f.getLastWrite() });
       }
     }
     f.close();
@@ -58,13 +59,28 @@ static String makeLabel(const String& path, const String& title, const String& a
   return label;
 }
 
-// Split "path\ttitle\tartist" into its parts.
+// Field reads stay bounded to one index row; no library-wide metadata Strings.
+static String field(const String& line, int wanted) {
+  int start = 0;
+  for (int i = 0; i < wanted; ++i) {
+    start = line.indexOf('\t', start);
+    if (start < 0) return String();
+    ++start;
+  }
+  int end = line.indexOf('\t', start);
+  return line.substring(start, end < 0 ? line.length() : end);
+}
+static void splitInfo(const String& line, String& path, Id3Info& info) {
+  path = field(line, 0); info = Id3Info();
+  info.title = field(line, 1); info.artist = field(line, 2);
+  info.album = field(line, 3); info.track = field(line, 4);
+  info.picture.offset = strtoul(field(line, 5).c_str(), nullptr, 10);
+  info.picture.length = strtoul(field(line, 6).c_str(), nullptr, 10);
+  info.picture.unsync = field(line, 7) == "1";
+  info.picture.type = strtoul(field(line, 8).c_str(), nullptr, 10);
+}
 static void splitLine(const String& line, String& path, String& title, String& artist) {
-  const int a = line.indexOf('\t');
-  const int b = (a < 0) ? -1 : line.indexOf('\t', a + 1);
-  path   = (a < 0) ? line : line.substring(0, a);
-  title  = (a < 0) ? String() : line.substring(a + 1, b < 0 ? line.length() : b);
-  artist = (b < 0) ? String() : line.substring(b + 1);
+  path = field(line, 0); title = field(line, 1); artist = field(line, 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -99,13 +115,25 @@ static bool buildIndex(const std::vector<Found>& tracks, uint32_t crc, StoragePr
     out.print('\t');
     out.print(tag.title);
     out.print('\t');
-    out.print(tag.artist);
-    out.print('\n');
+    out.print(tag.artist); out.print('\t');
+    out.print(tag.album); out.print('\t');
+    out.print(tag.track); out.print('\t');
+    out.print(tag.picture.offset); out.print('\t');
+    out.print(tag.picture.length); out.print('\t');
+    out.print(tag.picture.unsync ? 1 : 0); out.print('\t');
+    out.print(tag.picture.type); out.print('\n');
     if (progress) progress(i + 1, tracks.size());
   }
+  const bool written = out.getWriteError() == 0;
   out.close();
-  SD.remove(INDEX_PATH);
-  SD.rename(INDEX_TMP, INDEX_PATH);
+  if (!written) { SD.remove(INDEX_TMP); return false; }
+  // Recoverable replace: preserve the previous generation until rename succeeds.
+  SD.remove("/.sys/library.old");
+  if (SD.exists(INDEX_PATH) && !SD.rename(INDEX_PATH, "/.sys/library.old")) return false;
+  if (!SD.rename(INDEX_TMP, INDEX_PATH)) {
+    SD.rename("/.sys/library.old", INDEX_PATH); return false;
+  }
+  SD.remove("/.sys/library.old");
   Serial.printf("library: indexed %u tracks (%d with ID3 tags) in %lu ms\n",
                 (unsigned)tracks.size(), tagged, millis() - t0);
   return true;
@@ -165,6 +193,8 @@ bool storage_mount() {
 
 bool storage_begin(StorageProgressFn progress) {
   if (!storage_mount()) return false;
+  if (!SD.exists(INDEX_PATH) && SD.exists("/.sys/library.old"))
+    SD.rename("/.sys/library.old", INDEX_PATH);
 
   // Walk /music. Runs before Bluetooth, so a temporary list is affordable.
   const uint32_t t0 = millis();
@@ -176,12 +206,15 @@ bool storage_begin(StorageProgressFn progress) {
   for (const Found& t : tracks) {
     crc = esp_rom_crc32_le(crc, (const uint8_t*)t.path.c_str(), t.path.length());
     crc = esp_rom_crc32_le(crc, (const uint8_t*)&t.size, sizeof(t.size));
+    crc = esp_rom_crc32_le(crc, (const uint8_t*)&t.modified, sizeof(t.modified));
   }
   Serial.printf("sd: %u MB card, %u tracks (scan %lu ms)\n",
                 (unsigned)(SD.cardSize() / (1024ULL * 1024ULL)), (unsigned)tracks.size(),
                 millis() - t0);
 
-  if (!indexIsCurrent(tracks.size(), crc)) buildIndex(tracks, crc, progress);
+  if (!indexIsCurrent(tracks.size(), crc) && !buildIndex(tracks, crc, progress)) {
+    Serial.println("library: index upgrade failed; previous index preserved"); return false;
+  }
   const int count = tracks.size();
   tracks.clear();
   tracks.shrink_to_fit();
@@ -207,10 +240,8 @@ static bool fetch(int i) {
   f.seek(offsets[i]);
   const String line = f.readStringUntil('\n');
   f.close();
-  String path, title, artist;
-  splitLine(line, path, title, artist);
-  cachePath = path;
-  cacheLabel = makeLabel(path, title, artist);
+  splitInfo(line, cachePath, cacheInfo);
+  cacheLabel = makeLabel(cachePath, cacheInfo.title, cacheInfo.artist);
   cacheIndex = i;
   return true;
 }
@@ -241,6 +272,27 @@ void storage_forEach(StorageEachFn fn) {
       String path, title, artist;
       splitLine(line, path, title, artist);
       fn(i, path, makeLabel(path, title, artist));
+    }
+    f.close();
+  }
+  xSemaphoreGive(mutex);
+}
+
+bool storage_trackInfo(int i, Id3Info& info) {
+  xSemaphoreTake(mutex, portMAX_DELAY);
+  bool ok = fetch(i);
+  info = ok ? cacheInfo : Id3Info();
+  xSemaphoreGive(mutex);
+  return ok;
+}
+void storage_forEachInfo(StorageInfoFn fn) {
+  xSemaphoreTake(mutex, portMAX_DELAY);
+  File f = SD.open(INDEX_PATH);
+  if (f) {
+    f.readStringUntil('\n');
+    for (int i = 0; i < trackCount; ++i) {
+      const String line = f.readStringUntil('\n'); String path; Id3Info info;
+      splitInfo(line, path, info); fn(i, path, info); yield();
     }
     f.close();
   }
