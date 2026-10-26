@@ -173,7 +173,7 @@ CJK font; resampler and mixed-rate real-Helix reset tests passed as well.
 No compiler installation or hardware flashing was performed for these changes.
 
 For local Windows compilation use the existing instructions in
-[media update steps](chonkpod_media.md#updating-and-testing-on-windows), or from
+[media update steps](chonkpod_media.md#windows-update-and-bench-checklist), or from
 the updated repository folder run:
 
 ```powershell
