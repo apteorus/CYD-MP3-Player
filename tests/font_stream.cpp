@@ -15,6 +15,11 @@ int main(int argc,char** argv){
  b.insert(b.end(),12,255);save("/font.vlw",b);
  {VlwStream font;assert(font.begin("/font.vlw"));assert(font.render("A中A","/.sys/test.ttl"));failStrip=true;assert(!font.render("A","/.sys/no-memory.ttl"));failStrip=false;}
  {auto out=SD.open("/.sys/test.ttl");uint8_t h[4];assert(out.read(h,4)==4);assert(h[0]==9&&h[2]==18&&h[3]==2);uint8_t row[3];assert(out.read(row,3)==3);assert(row[0]!=0);}
+ // Even directory corruption after validation cannot overflow the glyph row.
+ {VlwStream font;assert(font.begin("/font.vlw"));
+  {std::fstream map(SD.root+"/.sys/font.idx",std::ios::in|std::ios::out|std::ios::binary);map.seekp(65*12+3);map.put(char(255));}
+  assert(!font.render("A","/.sys/corrupt.ttl"));}
+ assert(hostDelays>0); // preparation actually blocks periodically, not just yielding
  auto truncated=b;truncated.pop_back();save("/bad.vlw",truncated);
  {VlwStream font;assert(!font.begin("/bad.vlw"));}
  auto bad=b;bad[0]=0x7f;save("/bad.vlw",bad);

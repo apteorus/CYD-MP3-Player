@@ -394,4 +394,12 @@ lines.
 
 See [README_E32R28T.md](README_E32R28T.md) for the separate ESP32-32E profile,
 Windows compilation/flashing commands, and pending bench checks. Original board
-defaults remain unchanged; the new port has not yet been compiled or hardware tested.
+defaults remain unchanged; see the media guide for current build and bench status.
+
+### ChonkPod media revision
+
+The fork now includes safe streamed CJK title preparation, an SD-backed extended
+ID3 index, and cached JPEG album artwork in the Classic layout. Select
+**Setup → Visuals → Album artwork**; animated GIFs remain the default. JPEG support
+is bundled and needs no additional library installation. See
+[media changes, memory budget and update/bench instructions](docs/chonkpod_media.md).

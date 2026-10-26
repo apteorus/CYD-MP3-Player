@@ -1,4 +1,4 @@
-# Source-only port: this script has not yet been executed on Windows.
+# Initial port builds were executed on Windows by the user; media3 needs a new local build.
 # Compile by default; writing hardware requires explicit -Flash and -Port.
 [CmdletBinding()]
 param(

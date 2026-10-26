@@ -35,6 +35,8 @@ struct BtKnown {
   char    name[33];
 };
 
+enum VisualMode : uint8_t { VISUAL_GIF = 0, VISUAL_ART = 1, VISUAL_OFF = 2, VISUAL_COUNT };
+
 struct Settings {
   // Panel -- defaults come from the board profile, the stored values win.
   uint16_t panel      = CYD_PANEL_DRIVER;   // CYD_PANEL_ST7789 / CYD_PANEL_ILI9341
@@ -69,6 +71,7 @@ struct Settings {
 
   // Background: 0 = off, N = /bg/bgN.gif
   uint8_t  bgIndex    = 1;
+  uint8_t  visualMode = VISUAL_GIF; // original behavior unless explicitly changed
 
   // Bluetooth. The library keeps its own copy of the address for paging at
   // boot; this one lets the discovery fallback recognise the speaker too, and

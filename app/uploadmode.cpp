@@ -386,6 +386,7 @@ static void streamSongs(const String& dir, int depth, bool& first) {
     if (!name.startsWith(".")) {
       const String p = dir + "/" + name;
       if (f.isDirectory()) {
+        f.close(); // keep recursive scans within the same four-file SD budget
         if (depth < 2) streamSongs(p, depth + 1, first);   // as deep as the library goes
       } else if (endsWithCI(name, ".mp3")) {
         server.sendContent(String(first ? "\"" : ",\"") + jsonEscape(p.substring(7)) + "\"");

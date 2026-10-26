@@ -39,10 +39,11 @@ String storage_trackPath(int i);
 String storage_trackLabel(int i);
 
 // Read every entry in order with one pass over the index (boot-time jobs).
+// Callbacks hold the index mutex; do not call storage lookups from a callback.
 typedef void (*StorageEachFn)(int i, const String& path, const String& label);
-void storage_forEach(StorageEachFn fn);
+bool storage_forEach(StorageEachFn fn); // false on an unreadable/invalid row
 
 // One track's metadata, read on demand; only a single entry is cached in RAM.
 bool storage_trackInfo(int i, Id3Info& info);
 typedef void (*StorageInfoFn)(int i, const String& path, const Id3Info& info);
-void storage_forEachInfo(StorageInfoFn fn);
+bool storage_forEachInfo(StorageInfoFn fn);

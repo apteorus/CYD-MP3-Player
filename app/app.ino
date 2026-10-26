@@ -29,6 +29,7 @@
 #include "theme.h"
 #include "storage.h"
 #include "background.h"
+#include "artwork.h"
 #include "audio.h"
 #include "bt.h"
 #include "speaker.h"
@@ -129,6 +130,13 @@ static void titleProgress(int done, int total) {
   tft.drawString(String(done) + " / " + String(total), tft.width() / 2, tft.height() / 2 + 44, 2);
 }
 
+static void artProgress(int done, int total) {
+  if (done == 1) centreMessage("CYD MP3", "Preparing album artwork", theme().accent);
+  tft.fillRect(0, tft.height()/2 + 34, tft.width(), 20, theme().bg);
+  tft.setTextDatum(MC_DATUM); tft.setTextColor(theme().dim, theme().bg);
+  tft.drawString(String(done) + " / " + String(total), tft.width()/2, tft.height()/2 + 44, 2);
+}
+
 static void conversionProgress(int n, int total, int frame) {
   const Palette& p = theme();
   if (frame == 0) {
@@ -183,6 +191,7 @@ void loop() {}
   playlist_begin();
   // Both need RAM only available before Bluetooth starts: see the header.
   titles_prepareAll(titleProgress);
+  art_prepareAll(artProgress);
   bg_convertAll(conversionProgress);
   Serial.printf("heap before audio + bt: %u  largest %u\n",
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());

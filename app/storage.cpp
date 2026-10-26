@@ -1,6 +1,7 @@
 #include "storage.h"
 #include "board.h"
 #include "id3.h"
+#include "media_yield.h"
 #include <SPI.h>
 #include <vector>
 #include <algorithm>
@@ -28,6 +29,7 @@ static Id3Info cacheInfo;
 struct Found { String path; uint32_t size, modified; };
 
 static void scanDir(const String& path, int depth, std::vector<Found>& out) {
+  uint32_t pause = millis();
   File d = SD.open(path);
   if (!d || !d.isDirectory()) return;
   for (File f = d.openNextFile(); f && (int)out.size() < MAX_TRACKS; f = d.openNextFile()) {
@@ -35,6 +37,9 @@ static void scanDir(const String& path, int depth, std::vector<Found>& out) {
     if (name[0] != '.') {
       const String p = path + "/" + name;
       if (f.isDirectory()) {
+        // Close the entry before opening the same directory recursively.
+        // Keeps two subfolder levels within the existing four-file SD limit.
+        f.close();
         if (depth < 2) scanDir(p, depth + 1, out);
       } else {
         String low = p;
@@ -42,7 +47,7 @@ static void scanDir(const String& path, int depth, std::vector<Found>& out) {
         if (low.endsWith(".mp3")) out.push_back({ p, (uint32_t)f.size(), (uint32_t)f.getLastWrite() });
       }
     }
-    f.close();
+    f.close(); media_yield(pause);
   }
   d.close();
 }
@@ -86,10 +91,26 @@ static void splitLine(const String& line, String& path, String& title, String& a
 // ---------------------------------------------------------------------------
 // Index file
 // ---------------------------------------------------------------------------
+// A damaged row must not turn readStringUntil into an unbounded heap request.
+static String indexLine(File& f) {
+  String line;
+  for (unsigned count = 0; count <= 4096; ++count) {
+    int c = f.read();
+    if (c < 0 || c == '\n') return line;
+    if (count == 4096 || !line.concat(char(c))) return String();
+  }
+  return String();
+}
+static bool validRow(const String& line) {
+  if (!line.startsWith("/music/")) return false;
+  int pos = 0;
+  for (int i = 0; i < 8; ++i) { pos = line.indexOf('\t', pos); if (pos < 0) return false; ++pos; }
+  return true;
+}
 static bool indexIsCurrent(int count, uint32_t crc) {
   File f = SD.open(INDEX_PATH);
   if (!f) return false;
-  const String header = f.readStringUntil('\n');
+  const String header = indexLine(f);
   f.close();
   char expect[40];
   snprintf(expect, sizeof(expect), "%s %d %08x", INDEX_MAGIC, count, crc);
@@ -103,7 +124,7 @@ static bool buildIndex(const std::vector<Found>& tracks, uint32_t crc, StoragePr
   out.printf("%s %d %08x\n", INDEX_MAGIC, (int)tracks.size(), crc);
 
   const uint32_t t0 = millis();
-  int tagged = 0;
+  int tagged = 0; uint32_t pause = millis();
   for (size_t i = 0; i < tracks.size(); i++) {
     Id3Info tag;
     File f = SD.open(tracks[i].path);
@@ -123,6 +144,7 @@ static bool buildIndex(const std::vector<Found>& tracks, uint32_t crc, StoragePr
     out.print(tag.picture.unsync ? 1 : 0); out.print('\t');
     out.print(tag.picture.type); out.print('\n');
     if (progress) progress(i + 1, tracks.size());
+    media_yield(pause);
   }
   const bool written = out.getWriteError() == 0;
   out.close();
@@ -145,15 +167,17 @@ static bool loadOffsets(int expected) {
   offsets = (uint32_t*)malloc(max(1, expected) * sizeof(uint32_t));
   if (!offsets) return false;
   File f = SD.open(INDEX_PATH);
-  if (!f) return false;
+  if (!f || f.size() > 64UL + uint32_t(expected) * 4096) return false;
 
   static uint8_t buf[1024];
   uint32_t filePos = 0;
   bool headerDone = false;
   int n = 0;
+  uint32_t contentCrc = 0, pause = millis();
   for (;;) {
     const int got = f.read(buf, sizeof(buf));
     if (got <= 0) break;
+    contentCrc = esp_rom_crc32_le(contentCrc, buf, got);
     for (int i = 0; i < got; i++) {
       if (buf[i] != '\n') continue;
       const uint32_t next = filePos + i + 1;
@@ -161,10 +185,11 @@ static bool loadOffsets(int expected) {
       else n++;
       if (n < expected && next < f.size()) offsets[n] = next;
     }
-    filePos += got;
+    filePos += got; media_yield(pause);
   }
   f.close();
   // The first entry starts right after the header line.
+  libraryCrc = contentCrc; // metadata-only edits invalidate title preparation too
   trackCount = min(n, expected);
   return trackCount == expected;
 }
@@ -238,9 +263,10 @@ static bool fetch(int i) {
   File f = SD.open(INDEX_PATH);
   if (!f) return false;
   f.seek(offsets[i]);
-  const String line = f.readStringUntil('\n');
+  const String line = indexLine(f);
   f.close();
   splitInfo(line, cachePath, cacheInfo);
+  if (!validRow(line)) return false;
   cacheLabel = makeLabel(cachePath, cacheInfo.title, cacheInfo.artist);
   cacheIndex = i;
   return true;
@@ -262,20 +288,20 @@ String storage_trackLabel(int i) {
   return out;
 }
 
-void storage_forEach(StorageEachFn fn) {
+bool storage_forEach(StorageEachFn fn) {
+  uint32_t pause = millis();
   xSemaphoreTake(mutex, portMAX_DELAY);
   File f = SD.open(INDEX_PATH);
-  if (f) {
-    f.readStringUntil('\n');                   // header
-    for (int i = 0; i < trackCount; i++) {
-      const String line = f.readStringUntil('\n');
-      String path, title, artist;
-      splitLine(line, path, title, artist);
-      fn(i, path, makeLabel(path, title, artist));
-    }
-    f.close();
+  bool ok = f && !indexLine(f).isEmpty();
+  for (int i = 0; ok && i < trackCount; ++i) {
+    const String line = indexLine(f);
+    if (!validRow(line)) { ok = false; break; }
+    String path, title, artist;
+    splitLine(line, path, title, artist);
+    fn(i, path, makeLabel(path, title, artist)); media_yield(pause);
   }
-  xSemaphoreGive(mutex);
+  f.close(); xSemaphoreGive(mutex);
+  return ok;
 }
 
 bool storage_trackInfo(int i, Id3Info& info) {
@@ -285,16 +311,17 @@ bool storage_trackInfo(int i, Id3Info& info) {
   xSemaphoreGive(mutex);
   return ok;
 }
-void storage_forEachInfo(StorageInfoFn fn) {
+bool storage_forEachInfo(StorageInfoFn fn) {
+  uint32_t pause = millis();
   xSemaphoreTake(mutex, portMAX_DELAY);
   File f = SD.open(INDEX_PATH);
-  if (f) {
-    f.readStringUntil('\n');
-    for (int i = 0; i < trackCount; ++i) {
-      const String line = f.readStringUntil('\n'); String path; Id3Info info;
-      splitInfo(line, path, info); fn(i, path, info); yield();
-    }
-    f.close();
+  bool ok = f && !indexLine(f).isEmpty();
+  for (int i = 0; ok && i < trackCount; ++i) {
+    const String line = indexLine(f);
+    if (!validRow(line)) { ok = false; break; }
+    String path; Id3Info info;
+    splitInfo(line, path, info); fn(i, path, info); media_yield(pause);
   }
-  xSemaphoreGive(mutex);
+  f.close(); xSemaphoreGive(mutex);
+  return ok;
 }

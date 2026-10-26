@@ -30,6 +30,7 @@ void settings_begin() {
   s.srcKind    = prefs.getUChar ("srcKind", s.srcKind);
   s.srcKey     = prefs.getULong ("srcKey", s.srcKey);
   s.bgIndex    = prefs.getUChar ("bg",     s.bgIndex);
+  s.visualMode = prefs.getUChar ("visual", s.visualMode) % VISUAL_COUNT;
   s.btName     = prefs.getString("btName", s.btName);
   prefs.getBytes("btAddr", s.btAddr, sizeof(s.btAddr));
   // One blob for the lot. A blob of another size is from another version of
@@ -84,6 +85,7 @@ void settings_save() {
   prefs.putUChar ("srcKind",  s.srcKind);
   prefs.putULong ("srcKey",   s.srcKey);
   prefs.putUChar ("bg",       s.bgIndex);
+  prefs.putUChar ("visual",   s.visualMode);
   prefs.putString("btName",   s.btName);
   prefs.putBytes ("btAddr",   s.btAddr, sizeof(s.btAddr));
   prefs.putBytes ("known",    s.btKnown, sizeof(s.btKnown));

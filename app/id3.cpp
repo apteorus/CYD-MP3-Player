@@ -1,4 +1,5 @@
 #include "id3.h"
+#include "media_yield.h"
 
 static const size_t MAX_TEXT = 200;          // bytes of frame body worth reading
 
@@ -84,10 +85,10 @@ class TagReader {
   bool read(uint8_t* p, uint32_t n) { for (uint32_t i=0;i<n;++i) { int c=get(); if(c<0)return false; p[i]=c; } return true; }
   bool skip(uint32_t n) {
     if (!unsync) { if(n>end-pos)return false;pos+=n;return true; }
-    for (uint32_t i=0;i<n;++i) { if(get()<0)return false;if((i&1023)==0)yield(); } return true;
+    for (uint32_t i=0;i<n;++i) { if(get()<0)return false;if((i&1023)==0)media_yield(pause); } return true;
   }
  private:
-  uint8_t buffer[512]; uint32_t from = UINT32_MAX, have = 0; bool previousFF = false;
+  uint8_t buffer[512]; uint32_t from = UINT32_MAX, have = 0, pause = 0; bool previousFF = false;
 };
 bool safeSync(const uint8_t* p) { return !((p[0]|p[1]|p[2]|p[3])&128); }
 bool frameName(const uint8_t* p,int n) {
@@ -122,6 +123,7 @@ bool id3_read(fs::File& f, Id3Info& out) {
   if(version<2||version>4||(version==2&&(h[5]&0x40)))return false;
   const uint32_t length=syncsafe(h+6);
   if(length>16*1024*1024 || uint64_t(length)+10>f.size())return false;
+  uint32_t pause = millis();
   const bool globalUnsync=version<4&&(h[5]&0x80);
   TagReader tag(f,10,10+length,globalUnsync);
   if(version>=3&&(h[5]&0x40)) {
@@ -163,7 +165,7 @@ bool id3_read(fs::File& f, Id3Info& out) {
       while(n<sizeof(text)&&(c=body.get())>=0)text[n++]=c;
       if(!body.failed)*target=decodeText(text,n);
     }
-    if((frames&31)==0)yield();
+    if((frames&31)==0)media_yield(pause);
   }
   return out.title.length()||out.artist.length()||out.album.length()||out.track.length()||out.picture.length;
 }
@@ -172,11 +174,11 @@ bool id3_extractJpeg(fs::File& mp3,const Id3Picture& picture,fs::File& output) {
   TagReader signature(mp3,picture.offset,picture.offset+picture.length,picture.unsync);
   if(signature.get()!=255||signature.get()!=216||signature.get()!=255)return false;
   TagReader reader(mp3,picture.offset,picture.offset+picture.length,picture.unsync);
-  uint8_t buffer[512];size_t count=0;
+  uint8_t buffer[512];size_t count=0;uint32_t pause=millis();
   for(;;) {
     int c=reader.get();if(c<0)break;
     buffer[count++]=c;
-    if(count==sizeof(buffer)){if(output.write(buffer,count)!=count)return false;count=0;yield();}
+    if(count==sizeof(buffer)){if(output.write(buffer,count)!=count)return false;count=0;media_yield(pause);}
   }
   return !reader.failed && (!count||output.write(buffer,count)==count);
 }

@@ -6,11 +6,10 @@
 # "01. ". The player renders titles from a .vlw smooth font kept on the card at
 # /.sys/cjk16.vlw -- not in flash, where 2 MB of glyphs would not fit.
 #
-# The font is only loaded at boot, BEFORE Bluetooth starts, to turn each
-# title into a small bitmap cached in /.sys/t/. TFT_eSPI keeps ~12 bytes of
-# metrics per glyph in RAM while a font is loaded, so the subset is sized for
-# that moment: ~8,000 glyphs is ~100 KB, which fits in the ~180 KB free before
-# Bluetooth and would not fit anywhere after it.
+# ChonkPod streams glyph metrics/alpha rows from SD before Bluetooth starts and
+# pre-renders the existing small 2-bit title strips. It does not load the full
+# glyph table into RAM. The same VLW remains usable by legacy TFT_eSPI builds,
+# which need about 12 bytes of glyph-table RAM per character while loaded.
 #
 # Coverage: ASCII and Latin-1, general and CJK punctuation, full-width forms,
 # Japanese kana, Big5 level 1 (the 5,401 common Traditional characters) and
@@ -136,7 +135,7 @@ def main():
     print(f"font      : {os.path.basename(path)} at {PIXEL_SIZE} px")
     print(f"glyphs    : {len(metrics)}  (skipped {skipped} the face lacks)")
     print(f"height    : ascent {max_ascent} + descent {max_descent} = {max_ascent + max_descent} px")
-    print(f"RAM while loaded on the device: ~{len(metrics) * 12 // 1024} KB")
+    print("ChonkPod renderer: streamed glyphs; at most a 3,240-byte title strip, plus file/String overhead")
     print(f"wrote     : {args.out}  ({size / 1024 / 1024:.2f} MB)")
     print("copy it to the SD card as /.sys/cjk16.vlw")
 

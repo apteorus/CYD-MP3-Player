@@ -24,6 +24,7 @@
 #include "bt.h"
 #include "speaker.h"
 #include "background.h"
+#include "artwork.h"
 #include "storage.h"
 #include "settings.h"
 #include "titles.h"
@@ -78,6 +79,19 @@ static void drawArea() {
                   ? L->band.y - A.y : A.h;
   tft.fillRect(A.x, A.y, A.w, h, p.bg);
   ui_icon(ICON_NOTE, A.x + A.w / 2, A.y + h / 2, ICON_XL, p.dim, p.bg);
+  if (g_settings.visualMode == VISUAL_ART) {
+    Id3Info info;
+    storage_trackInfo(audio_currentTrack(), info);
+    const int caption = h >= 64 ? 20 : 0;
+    Rect artView = {A.x, A.y, A.w, h - caption};
+    art_start(audio_currentTrack(), artView);
+    if (caption) {
+      tft.fillRect(A.x, A.y + h - caption, A.w, caption, p.bg);
+      const int trackRoom = info.track.isEmpty() ? 0 : min(70, A.w / 3);
+      if (!info.album.isEmpty()) ui_text(info.album, A.x + 4, A.y + h - caption/2, ML_DATUM, p.dim, p.bg, max(0, A.w - trackRoom - 8));
+      if (trackRoom) ui_text("#" + info.track, A.x + A.w - 4, A.y + h - caption/2, MR_DATUM, p.dim, p.bg, trackRoom);
+    }
+  }
 }
 
 static void drawTitle() {
@@ -189,6 +203,7 @@ static void loadTitle() {
 }
 
 static void enter() {
+  art_stop();
   L = &layout_player();
   litButton = dragFromVol = -1;
   const Palette& p = theme();
@@ -205,7 +220,8 @@ static void enter() {
     }
     bgView = { L->area.x + f, L->area.y + f, L->area.w - f * 2, L->area.h - f * 2 };
     bg_setView(bgView, L->masks, L->maskCount);
-    if (g_settings.bgIndex && !bg_active() && !bg_start(g_settings.bgIndex))
+    if (g_settings.visualMode != VISUAL_GIF) bg_stop();
+    if (g_settings.visualMode == VISUAL_GIF && g_settings.bgIndex && !bg_active() && !bg_start(g_settings.bgIndex))
       g_settings.bgIndex = 0;
   } else {
     bg_stop();
@@ -233,12 +249,14 @@ static void enter() {
 }
 
 static void leave() {
+  art_stop();
   bg_stop();
 }
 
 static void tick(uint32_t now) {
   if (audio_trackSerial() != shownSerial) {
     shownSerial = audio_trackSerial();
+    if (g_settings.visualMode == VISUAL_ART) drawArea();
     if (has(L->list)) {
       // Keep the playing track on the page and its highlight current.
       const int rows = tracklist_rows(L->list, L->listRowH);
@@ -293,7 +311,10 @@ static void tick(uint32_t now) {
     settings_save();
   }
 
-  if (has(L->area)) bg_tick(now);
+  if (has(L->area)) {
+    if (g_settings.visualMode == VISUAL_ART) art_tick(now);
+    else if (g_settings.visualMode == VISUAL_GIF) bg_tick(now);
+  }
 }
 
 static void touch(TouchEvent ev, int x, int y) {

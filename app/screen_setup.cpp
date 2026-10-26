@@ -24,13 +24,13 @@
 #include "firmware.h"
 
 enum Row : uint8_t {
-  ROW_OUTPUT, ROW_BLUETOOTH, ROW_UPLOAD, ROW_PIN, ROW_THEME, ROW_STYLE, ROW_LAYOUT, ROW_BACKGROUND, ROW_ORIENTATION,
+  ROW_OUTPUT, ROW_BLUETOOTH, ROW_UPLOAD, ROW_PIN, ROW_THEME, ROW_STYLE, ROW_LAYOUT, ROW_VISUAL, ROW_BACKGROUND, ROW_ORIENTATION,
   ROW_BRIGHTNESS, ROW_LANGUAGE, ROW_INVERT, ROW_PANEL, ROW_CALIBRATE, ROW_ABOUT,
   ROW_COUNT
 };
 
 static const Txt ROW_LABELS[ROW_COUNT] = {
-  T_AUDIO_OUT, T_BLUETOOTH_SPEAKER, T_UPLOAD_MUSIC, T_WEB_PIN, T_THEME, T_STYLE, T_LAYOUT, T_BACKGROUND, T_ORIENTATION,
+  T_AUDIO_OUT, T_BLUETOOTH_SPEAKER, T_UPLOAD_MUSIC, T_WEB_PIN, T_THEME, T_STYLE, T_LAYOUT, T_VISUAL_MODE, T_BACKGROUND, T_ORIENTATION,
   T_BRIGHTNESS, T_LANGUAGE, T_INVERT, T_PANEL, T_CALIBRATE, T_ABOUT,
 };
 
@@ -67,6 +67,10 @@ static RowValue rowValue(Row r) {
     case ROW_LAYOUT: {
       static const Txt SKINS[SKIN_COUNT] = { T_SKIN_CLASSIC, T_SKIN_BIG, T_SKIN_LIST };
       return ui_cycle(SKINS[g_settings.skin % SKIN_COUNT]);
+    }
+    case ROW_VISUAL: {
+      static const Txt MODES[] = {T_GIF_MODE, T_ALBUM_ART, T_OFF};
+      return ui_cycle(MODES[g_settings.visualMode % VISUAL_COUNT]);
     }
     case ROW_BACKGROUND:
       if (bg_count() == 0) return ui_info(String(tr(T_NO_GIFS)));
@@ -194,6 +198,9 @@ static void touch(TouchEvent ev, int x, int y) {
       return;
     case ROW_LAYOUT:
       g_settings.skin = (g_settings.skin + 1) % SKIN_COUNT;
+      break;
+    case ROW_VISUAL:
+      g_settings.visualMode = (g_settings.visualMode + 1) % VISUAL_COUNT;
       break;
     case ROW_BACKGROUND:
       if (bg_count() == 0) return;

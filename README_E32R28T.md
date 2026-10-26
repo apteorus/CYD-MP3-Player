@@ -5,8 +5,9 @@ working from `apteorus/CYD-MP3-Player` commit
 `404332e93974f4f70392b613c9f3dfb25e1b89b8`.
 Supports the **resistive-touch E32R28T**, not E32N28T.
 [Manufacturer reference](https://www.lcdwiki.com/2.8inch_ESP32-32E_Display).
-The initial port compiled on Linux and Windows; the seek1 follow-up is tested
-on Linux. Full hardware validation remains pending.
+The original port compiled on Linux and Windows. The media3 revision builds
+on Linux; current media changes still need Windows and hardware verification.
+See [media changes and update steps](docs/chonkpod_media.md).
 
 The original ST7789 default and both original ILI9341 profiles remain available.
 The E32R28T profile is selected with
@@ -58,8 +59,8 @@ Back up any custom TFT_eSPI setup before copying. Reapply the template after
 library updates; restore the original board's matching template before building
 for it. Use one TFT_eSPI installation, not conflicting IDE/CLI library copies.
 AnimatedGIF is vendored; no external installation is needed. Pillow/font
-creation is optional; see the main README. These dependency versions are pinned
-for reproduction, not a claim that this port has passed compilation.
+creation is optional; see the main README. These dependency versions reproduce the verified Linux builds; run the local
+commands below to validate this media revision on Windows.
 
 ## Compile and flash locally
 
@@ -129,7 +130,7 @@ recalibration available; no erase is required to adjust settings.
 
 Retain Apache-2.0 license and upstream attribution, plus dependency/vendor
 notices, when redistributing. This is a derived ChonkPod build with suffix
-`1.2.0-chonkpod-e32r28t`, not an official upstream release.
+`1.2.0-chonkpod-e32r28t-media3`, not an official upstream release.
 
 ## Seek crash follow-up (seek1)
 
@@ -161,6 +162,7 @@ Copy generated `sdcard/.sys/cjk16.vlw` to `/.sys/cjk16.vlw` on the SD card, or
 upload via the uploader's Title font tab. Windows must have a supported CJK font
 (e.g. Microsoft JhengHei at `C:/Windows/Fonts/msjh.ttc`). Reboot the player to
 render title strips. Folder sources are reached by opening Library then tapping
-the current list name in its header. Album-art display is not implemented.
+the current list name in its header. Album artwork is now available in Classic layout via Setup → Visuals; see docs/chonkpod_media.md.
+Font preparation now validates and streams the VLW without loading glyph tables; an interrupted pass is skipped via /.sys/font.busy. See the media guide before retrying.
 If titles remain absent after installing the font, provide one affected MP3 and
 its `/.sys/library.idx` entry for parsing diagnosis; do not erase the card.

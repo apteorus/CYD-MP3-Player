@@ -10,10 +10,10 @@
 #include <SD.h>
 #include <esp_rom_crc.h>
 #include "vlw_stream.h"
+#include "media_yield.h"
 
 // Strip file: u16 width, u8 height, u8 bits-per-pixel (2), then height rows of
 // width pixels, 2 bits each, packed MSB-first, row-major.
-static const char*  FONT_NAME  = ".sys/cjk16";        // TFT_eSPI adds "/" and ".vlw"
 static const char*  FONT_PATH  = "/.sys/cjk16.vlw";
 static const char*  STRIP_DIR  = "/.sys/t";
 static const int    MAX_W      = 720;                 // ~45 CJK characters
@@ -37,14 +37,25 @@ static inline int stripBytes(int w) { return (w * TITLE_STRIP_H * 2 + 7) / 8; }
 // ---------------------------------------------------------------------------
 // Boot: render missing strips
 // ---------------------------------------------------------------------------
+static bool validStrip(const String& path) {
+  File f = SD.open(path); uint8_t h[4];
+  if (!f || f.read(h, 4) != 4 || h[2] != TITLE_STRIP_H || h[3] != 2) return false;
+  const int width = h[0] | h[1] << 8;
+  return width > 0 && width <= MAX_W && f.size() == uint32_t(4 + stripBytes(width));
+}
+
 static VlwStream* renderFont = nullptr;
 static TitleProgressFn renderProgress = nullptr;
 static int pendingCount = 0, renderedCount = 0, failedCount = 0;
 static void visitText(const char* text) {
+  media_idle_tick();
   const String label(text);
-  if (SD.exists(pathFor(keyFor(label)))) return;
+  if (validStrip(pathFor(keyFor(label)))) return;
   if (!renderFont) { ++pendingCount; return; }
-  if (!renderFont->render(label, pathFor(keyFor(label)))) ++failedCount;
+  if (!renderFont->render(label, pathFor(keyFor(label)))) {
+    ++failedCount;
+    if (failedCount <= 3) Serial.printf("titles: strip failed for %s\n", pathFor(keyFor(label)).c_str());
+  }
   ++renderedCount;
   if (renderProgress) renderProgress(renderedCount, pendingCount);
   if ((renderedCount % 16) == 0)
@@ -82,7 +93,7 @@ static String doneStamp() {
 
 static bool upToDate() {
   File f = SD.open(DONE_PATH);
-  if (!f) return false;
+  if (!f || f.size() != 24) return false;
   const String s = f.readString();
   f.close();
   return s == doneStamp();
@@ -97,14 +108,19 @@ static void collectUiText(const char* text) { visitText(text); }
 static void collectName(const char* text) {
   for (const char* p = text; *p; ++p) if (uint8_t(*p) >= 128) { visitText(text); return; }
 }
-static void visitAll() {
-  storage_forEach(collectMissing);
+static void collectAlbum(int, const String&, const Id3Info& info) {
+  if (!info.album.isEmpty()) visitText(info.album.c_str());
+}
+static bool visitAll() {
+  bool ok = storage_forEach(collectMissing);
+  ok = storage_forEachInfo(collectAlbum) && ok;
   i18n_forEachChinese(collectUiText);
   for (int i = 0; i < theme_count(); ++i) visitText(theme_at(i).nameZh);
   for (int i = 0; i < style_count(); ++i) visitText(style_at(i).nameZh);
 #ifndef CYD_UPLOADER
   playlist_forEachName(collectName);
 #endif
+  return ok;
 }
 
 bool titles_prepareAll(TitleProgressFn progress) {
@@ -129,14 +145,17 @@ bool titles_prepareAll(TitleProgressFn progress) {
     VlwStream font;
     if (font.begin(FONT_PATH)) {
       pendingCount = renderedCount = failedCount = 0;
-      renderFont = nullptr; visitAll();
-      renderFont = &font; renderProgress = progress; visitAll();
+      renderFont = nullptr; bool indexed = visitAll();
+      renderFont = &font; renderProgress = progress;
+      if (indexed) indexed = visitAll();
       renderFont = nullptr; renderProgress = nullptr;
-      ok = failedCount == 0;
-      if (ok) markDone();
+      ok = indexed && failedCount == 0;
+      if (!indexed) Serial.println("titles: index read failed; preparation will retry next boot");
+      if (ok) { markDone(); if (progress && pendingCount > 0) progress(pendingCount, pendingCount); }
       Serial.printf("titles: %d strips written, %d failures\n", renderedCount, failedCount);
     } else Serial.println("titles: invalid/unreadable font or directory write failed -- Latin fallback");
   }
+  SD.remove("/.sys/font.tmp"); // reclaim a partial directory after a handled error
   SD.remove(busy);
   return ok;
 }
@@ -154,20 +173,18 @@ bool titles_load(const String& text) {
   File f = SD.open(pathFor(key));
   if (!f) return false;
   uint8_t hdr[4];
+  bool damaged = false;
   if (f.read(hdr, 4) == 4 && hdr[2] == TITLE_STRIP_H && hdr[3] == 2) {
     const int w = hdr[0] | (hdr[1] << 8);
     const int n = stripBytes(w);
-    if (w > 0 && w <= MAX_W && (strip = (uint8_t*)malloc(n)) != nullptr) {
-      if (f.read(strip, n) == (size_t)n) {
-        stripW = w;
-        stripKey = key;
-      } else {
-        free(strip);
-        strip = nullptr;
-      }
-    }
-  }
+    if (w <= 0 || w > MAX_W || f.size() != uint32_t(4 + n)) damaged = true;
+    else if ((strip = (uint8_t*)malloc(n)) != nullptr) {
+      if (f.read(strip, n) == (size_t)n) { stripW = w; stripKey = key; }
+      else { free(strip); strip = nullptr; damaged = true; }
+    } // Allocation failure preserves the valid SD cache for a later attempt.
+  } else damaged = true;
   f.close();
+  if (damaged) SD.remove(DONE_PATH); // revalidate/rebuild next boot; keep old cache until replacement succeeds
   return strip != nullptr;
 }
 

@@ -110,3 +110,17 @@ Metadata findings: the log reports 18 folders and a missing CJK title font.
 Album artwork is not implemented. Non-Latin titles may be read correctly but
 invisible with the ASCII fallback. No speculative ID3 changes were made; an
 affected MP3 is needed if installing the font does not resolve missing titles.
+
+## Media revision (supersedes earlier font/art limitations)
+
+The font/index/art changes and their exact memory/failure contracts are documented
+in docs/chonkpod_media.md. Separate commits cover streamed font recovery, extended
+ID3/index migration, and the artwork pipeline. The user font is structurally valid;
+unchecked full glyph-table allocations were an unsafe original path, but the
+original hardware reset was not symbolicated because its boot log was unavailable.
+
+Current validation includes six production-code host suites with ASan/UBSan and
+both firmware images for E32R28T and the original default ST7789 profile. The
+MP3 decoder and ring implementation were not modified by the media work. Hardware
+validation of this revision remains pending; prior successful playback/seek tests
+predate these media changes. No device was flashed by the cloud agent.
