@@ -9,7 +9,7 @@
 #endif
 #include <SD.h>
 #include <esp_rom_crc.h>
-#include <vector>
+#include "vlw_stream.h"
 
 // Strip file: u16 width, u8 height, u8 bits-per-pixel (2), then height rows of
 // width pixels, 2 bits each, packed MSB-first, row-major.
@@ -37,43 +37,22 @@ static inline int stripBytes(int w) { return (w * TITLE_STRIP_H * 2 + 7) / 8; }
 // ---------------------------------------------------------------------------
 // Boot: render missing strips
 // ---------------------------------------------------------------------------
-static bool renderOne(TFT_eSprite& spr, const String& text, const String& path) {
-  const int w = constrain(spr.textWidth(text), 1, MAX_W);
-  spr.fillSprite(TFT_BLACK);
-  spr.setTextColor(TFT_WHITE, TFT_BLACK);
-  spr.setTextDatum(TL_DATUM);
-  spr.drawString(text, 0, 0);
-
-  const int n = stripBytes(w);
-  uint8_t* buf = (uint8_t*)calloc(1, n);
-  if (!buf) return false;
-  for (int y = 0; y < TITLE_STRIP_H; y++) {
-    for (int x = 0; x < w; x++) {
-      // 8-bit sprite: white text on black, so red is the coverage. Top two
-      // bits of it are the 4 anti-aliasing levels kept.
-      const uint16_t c = spr.readPixel(x, y);
-      const uint8_t level = ((c >> 11) & 0x1F) >> 3;
-      const int bit = (y * w + x) * 2;
-      buf[bit >> 3] |= level << (6 - (bit & 7));
-    }
-  }
-  File f = SD.open(path, FILE_WRITE);
-  bool ok = false;
-  if (f) {
-    const uint8_t hdr[4] = { (uint8_t)w, (uint8_t)(w >> 8), TITLE_STRIP_H, 2 };
-    ok = f.write(hdr, 4) == 4 && f.write(buf, n) == (size_t)n;
-    f.close();
-  }
-  free(buf);
-  return ok;
+static VlwStream* renderFont = nullptr;
+static TitleProgressFn renderProgress = nullptr;
+static int pendingCount = 0, renderedCount = 0, failedCount = 0;
+static void visitText(const char* text) {
+  const String label(text);
+  if (SD.exists(pathFor(keyFor(label)))) return;
+  if (!renderFont) { ++pendingCount; return; }
+  if (!renderFont->render(label, pathFor(keyFor(label)))) ++failedCount;
+  ++renderedCount;
+  if (renderProgress) renderProgress(renderedCount, pendingCount);
+  if ((renderedCount % 16) == 0)
+    Serial.printf("titles: %d/%d, heap %u largest %u\n", renderedCount, pendingCount,
+                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  yield();
 }
-
-// Boot-time pass state, shared with the storage_forEach callback.
-static std::vector<String>* pending = nullptr;
-
-static void collectMissing(int, const String&, const String& label) {
-  if (!SD.exists(pathFor(keyFor(label)))) pending->push_back(label);
-}
+static void collectMissing(int, const String&, const String& label) { visitText(label.c_str()); }
 
 // A marker holding the library checksum the strips were last made for. When it
 // matches, every title already has its strip and the per-title check -- one
@@ -114,64 +93,52 @@ static void markDone() {
   if (f) { f.print(doneStamp()); f.close(); }
 }
 
-static void collectUiText(const char* text) {
-  const String s = text;
-  if (!SD.exists(pathFor(keyFor(s)))) pending->push_back(s);
-}
-
-// Folder and playlist names: only the ones the built-in font cannot draw.
+static void collectUiText(const char* text) { visitText(text); }
 static void collectName(const char* text) {
-  for (const char* c = text; *c; c++)
-    if ((uint8_t)*c >= 0x80) { collectUiText(text); return; }
+  for (const char* p = text; *p; ++p) if (uint8_t(*p) >= 128) { visitText(text); return; }
+}
+static void visitAll() {
+  storage_forEach(collectMissing);
+  i18n_forEachChinese(collectUiText);
+  for (int i = 0; i < theme_count(); ++i) visitText(theme_at(i).nameZh);
+  for (int i = 0; i < style_count(); ++i) visitText(style_at(i).nameZh);
+#ifndef CYD_UPLOADER
+  playlist_forEachName(collectName);
+#endif
 }
 
 bool titles_prepareAll(TitleProgressFn progress) {
   if (!SD.exists(STRIP_DIR)) SD.mkdir(STRIP_DIR);
   if (upToDate()) return true;
-
-  std::vector<String> missing;
-  pending = &missing;
-  storage_forEach(collectMissing);
-  i18n_forEachChinese(collectUiText);
-  for (int i = 0; i < theme_count(); i++) collectUiText(theme_at(i).nameZh);
-  for (int i = 0; i < style_count(); i++) collectUiText(style_at(i).nameZh);
-#ifndef CYD_UPLOADER
-  playlist_forEachName(collectName);
-#endif
-  pending = nullptr;
-  if (missing.empty()) { markDone(); return true; }
-
-  if (!SD.exists(FONT_PATH)) {
-    Serial.printf("titles: %u titles need rendering but %s is missing -- ASCII fallback\n",
-                  (unsigned)missing.size(), FONT_PATH);
+  if (!SD.exists(FONT_PATH)) { Serial.println("titles: no font -- Latin fallback (cached strips retained)"); return false; }
+  // A power loss/watchdog in this pass must never turn into a repeating boot loop.
+  // Remove this file explicitly to retry after diagnosing the failure.
+  const char* busy = "/.sys/font.busy";
+  if (SD.exists(busy)) {
+    Serial.println("titles: previous font pass interrupted; Latin fallback. Remove /.sys/font.busy to retry");
     return false;
   }
-
-  const uint32_t t0 = millis();
-  TFT_eSprite spr(&tft);
-  spr.setColorDepth(8);
-  if (!spr.createSprite(MAX_W, TITLE_STRIP_H)) {
-    Serial.println("titles: no memory for the render sprite");
-    return false;
+  File marker = SD.open(busy, FILE_WRITE);
+  if (!marker || marker.write(uint8_t(1)) != 1) {
+    Serial.println("titles: cannot arm recovery marker -- Latin fallback"); return false;
   }
-  spr.loadFont(FONT_NAME, SD);
-  Serial.printf("titles: font loaded, heap %u -- rendering %u titles\n",
-                ESP.getFreeHeap(), (unsigned)missing.size());
-
-  int done = 0, failed = 0;
-  for (const String& text : missing) {
-    if (!renderOne(spr, text, pathFor(keyFor(text)))) {
-      failed++;
-      Serial.printf("titles: could not write strip for \"%s\"\n", text.c_str());
-    }
-    if (progress) progress(++done, missing.size());
+  marker.close();
+  Serial.printf("titles: streaming font preparation; heap %u largest %u\n", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  bool ok = false;
+  {
+    VlwStream font;
+    if (font.begin(FONT_PATH)) {
+      pendingCount = renderedCount = failedCount = 0;
+      renderFont = nullptr; visitAll();
+      renderFont = &font; renderProgress = progress; visitAll();
+      renderFont = nullptr; renderProgress = nullptr;
+      ok = failedCount == 0;
+      if (ok) markDone();
+      Serial.printf("titles: %d strips written, %d failures\n", renderedCount, failedCount);
+    } else Serial.println("titles: invalid/unreadable font or directory write failed -- Latin fallback");
   }
-  spr.unloadFont();
-  spr.deleteSprite();
-  if (!failed) markDone();
-  Serial.printf("titles: %d rendered in %lu ms, heap %u\n", done, millis() - t0,
-                ESP.getFreeHeap());
-  return true;
+  SD.remove(busy);
+  return ok;
 }
 
 // ---------------------------------------------------------------------------

@@ -3,8 +3,7 @@
 // ===========================================================================
 // TFT_eSPI's built-in fonts are ASCII-only. A CJK font covering real song
 // titles is ~1.8 MB (on the SD card, /.sys/cjk16.vlw, made by
-// tools/gen_cjk_font.py) and holds ~85 KB of metrics in RAM while loaded --
-// affordable at boot, impossible once Bluetooth has the heap.
+// tools/gen_cjk_font.py) with glyph metrics indexed on SD; the renderer uses at most a 3.3 KB strip.
 //
 // So titles get the same treatment as backgrounds:
 //   BOOT, before Bluetooth   titles_prepareAll()

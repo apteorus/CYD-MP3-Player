@@ -24,7 +24,7 @@
 
 // One version for both images; tools/make_release.sh names the file after it.
 #if CYD_BOARD == CYD_BOARD_LCDWIKI_E32R28T
-#define FIRMWARE_VERSION "1.2.0-chonkpod-e32r28t-seek1"
+#define FIRMWARE_VERSION "1.2.0-chonkpod-e32r28t-media1"
 #else
 #define FIRMWARE_VERSION "1.2.0"
 #endif
