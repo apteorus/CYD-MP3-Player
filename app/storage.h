@@ -31,6 +31,7 @@ bool storage_mount();                              // card + folders only; false
 bool storage_begin(StorageProgressFn progress);   // mount, then scan and index /music
 
 int      storage_trackCount();
+uint32_t storage_artworkCrc();         // library + folder cover path/size/mtime
 uint32_t storage_libraryCrc();         // changes whenever the track list does
 
 String storage_trackPath(int i);

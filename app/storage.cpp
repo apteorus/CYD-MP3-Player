@@ -17,6 +17,7 @@ static const int   MAX_TRACKS = 2000;
 static uint32_t* offsets = nullptr;
 static int       trackCount = 0;
 static uint32_t  libraryCrc = 0;
+static uint32_t coverCrc = 0;
 
 static SemaphoreHandle_t mutex = nullptr;
 static int    cacheIndex = -1;
@@ -44,6 +45,13 @@ static void scanDir(const String& path, int depth, std::vector<Found>& out) {
       } else {
         String low = p;
         low.toLowerCase();
+        if (String(name) == "cover.jpg") {
+          uint32_t size = f.size(), modified = f.getLastWrite();
+          uint32_t h = esp_rom_crc32_le(0, (const uint8_t*)p.c_str(), p.length());
+          h = esp_rom_crc32_le(h, (const uint8_t*)&size, sizeof(size));
+          h = esp_rom_crc32_le(h, (const uint8_t*)&modified, sizeof(modified));
+          coverCrc ^= h; // directory enumeration order must not affect the checkpoint
+        }
         if (low.endsWith(".mp3")) out.push_back({ p, (uint32_t)f.size(), (uint32_t)f.getLastWrite() });
       }
     }
@@ -224,6 +232,7 @@ bool storage_begin(StorageProgressFn progress) {
   // Walk /music. Runs before Bluetooth, so a temporary list is affordable.
   const uint32_t t0 = millis();
   std::vector<Found> tracks;
+  coverCrc = 0;
   scanDir("/music", 0, tracks);
   std::sort(tracks.begin(), tracks.end(),
             [](const Found& a, const Found& b) { return a.path < b.path; });
@@ -255,6 +264,9 @@ bool storage_begin(StorageProgressFn progress) {
 
 int      storage_trackCount() { return trackCount; }
 uint32_t storage_libraryCrc() { return libraryCrc; }
+uint32_t storage_artworkCrc() {
+  return esp_rom_crc32_le(libraryCrc, (const uint8_t*)&coverCrc, sizeof(coverCrc));
+}
 
 // Read entry i into the cache. Caller holds the mutex.
 static bool fetch(int i) {

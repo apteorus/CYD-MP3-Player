@@ -5,9 +5,10 @@ working from `apteorus/CYD-MP3-Player` commit
 `404332e93974f4f70392b613c9f3dfb25e1b89b8`.
 Supports the **resistive-touch E32R28T**, not E32N28T.
 [Manufacturer reference](https://www.lcdwiki.com/2.8inch_ESP32-32E_Display).
-The original port compiled on Linux and Windows. The media3 revision builds
+The original port compiled on Linux and Windows. The media4 revision builds
 on Linux; current media changes still need Windows and hardware verification.
-See [media changes and update steps](docs/chonkpod_media.md).
+See [media changes and update steps](docs/chonkpod_media.md) and
+[playback timing, artwork startup and hardware checks](docs/chonkpod_performance.md).
 
 The original ST7789 default and both original ILI9341 profiles remain available.
 The E32R28T profile is selected with
@@ -130,7 +131,7 @@ recalibration available; no erase is required to adjust settings.
 
 Retain Apache-2.0 license and upstream attribution, plus dependency/vendor
 notices, when redistributing. This is a derived ChonkPod build with suffix
-`1.2.0-chonkpod-e32r28t-media3`, not an official upstream release.
+`1.2.0-chonkpod-e32r28t-media4`, not an official upstream release.
 
 ## Seek crash follow-up (seek1)
 

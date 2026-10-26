@@ -41,6 +41,13 @@ int main(int argc,char**argv){
  std::ifstream keptFile(SD.root+"/.sys/library.idx",std::ios::binary);
  std::string kept((std::istreambuf_iterator<char>(keptFile)),{});assert(kept==oldIndex);keptFile.close();
  assert(storage_begin(nullptr)&&storage_trackInfo(0,info)&&info.album=="Changed");
+ uint32_t art=storage_artworkCrc(), lib=storage_libraryCrc();
+ {std::ofstream f(SD.root+"/music/A/cover.jpg");f<<"cover";}
+ assert(storage_begin(nullptr));assert(storage_libraryCrc()==lib&&storage_artworkCrc()!=art);
+ art=storage_artworkCrc();assert(storage_begin(nullptr)&&storage_artworkCrc()==art);
+ {std::ofstream f(SD.root+"/music/A/cover.jpg",std::ios::app);f<<"changed";}
+ assert(storage_begin(nullptr)&&storage_artworkCrc()!=art);
+ SD.remove("/music/A/cover.jpg");assert(storage_begin(nullptr)&&storage_libraryCrc()==lib);
  assert(fs::openFiles==0);
  puts("PASS: CYDLIB2 migration, full metadata roundtrip, two folder levels at 4-file limit, metadata CRC and index recovery");
 }

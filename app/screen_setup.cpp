@@ -20,18 +20,19 @@
 #include "bt.h"
 #include "speaker.h"
 #include "audio.h"
+#include "artwork.h"
 #include "layouts.h"
 #include "firmware.h"
 
 enum Row : uint8_t {
   ROW_OUTPUT, ROW_BLUETOOTH, ROW_UPLOAD, ROW_PIN, ROW_THEME, ROW_STYLE, ROW_LAYOUT, ROW_VISUAL, ROW_BACKGROUND, ROW_ORIENTATION,
-  ROW_BRIGHTNESS, ROW_LANGUAGE, ROW_INVERT, ROW_PANEL, ROW_CALIBRATE, ROW_ABOUT,
+  ROW_BRIGHTNESS, ROW_LANGUAGE, ROW_INVERT, ROW_PANEL, ROW_CALIBRATE, ROW_ART_REFRESH, ROW_ABOUT,
   ROW_COUNT
 };
 
 static const Txt ROW_LABELS[ROW_COUNT] = {
   T_AUDIO_OUT, T_BLUETOOTH_SPEAKER, T_UPLOAD_MUSIC, T_WEB_PIN, T_THEME, T_STYLE, T_LAYOUT, T_VISUAL_MODE, T_BACKGROUND, T_ORIENTATION,
-  T_BRIGHTNESS, T_LANGUAGE, T_INVERT, T_PANEL, T_CALIBRATE, T_ABOUT,
+  T_BRIGHTNESS, T_LANGUAGE, T_INVERT, T_PANEL, T_CALIBRATE, T_ART_REFRESH, T_ABOUT,
 };
 
 static const int ROW_H   = UI_ROW_H;
@@ -87,6 +88,7 @@ static RowValue rowValue(Row r) {
     case ROW_PANEL:      return ui_nav(String(display_panelName(g_settings.panel)));
     case ROW_CALIBRATE:  return ui_nav();
     case ROW_UPLOAD:     return ui_nav();
+    case ROW_ART_REFRESH:return ui_nav();
     // Shown in full: holding the device is what entitles you to it.
     case ROW_PIN:        return ui_nav(g_settings.webPin);
     case ROW_ABOUT: {
@@ -138,6 +140,14 @@ static void switchPanel() {
   settings_save();
   delay(200);
   ESP.restart();
+}
+
+static void refreshArtwork() {
+  if (!art_requestRefresh()) { ui_toast(T_ART_REFRESH_ERROR); return; }
+  g_settings.lastTrack = audio_currentTrack();
+  g_settings.lastPosMs = audio_positionMs();
+  settings_saveResume();
+  delay(100); ESP.restart();
 }
 
 static void resetPin() {
@@ -230,6 +240,9 @@ static void touch(TouchEvent ev, int x, int y) {
       // accident -- and the owner should know the way back before they need
       // it: the 8 s boot hold (display.h).
       ui_confirm(T_PANEL_CONFIRM, T_PANEL_WARN1, T_PANEL_WARN2, T_RESTART, switchPanel);
+      return;
+    case ROW_ART_REFRESH:
+      ui_confirm(T_ART_REFRESH_Q, T_ART_REFRESH_HINT, T_RESTARTING, T_RESTART, refreshArtwork);
       return;
     case ROW_CALIBRATE:
       calibrate_run();

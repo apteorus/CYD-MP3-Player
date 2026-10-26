@@ -89,3 +89,103 @@ flash automatically. After a local build/flash:
 4. Confirm saved pairing/reconnect, onboard DAC routing, CJK titles, ID3 labels,
    touch/seek/layouts and GIF mode still work. Hardware heap/stack measurements
    remain necessary; linker totals are not runtime heap evidence.
+
+## Artwork checkpoint (media4)
+
+`/.sys/art/prepared` is a 16-byte ACP1 record containing format version,
+library/folder-cover fingerprint, track count and integrity check. An unchanged
+boot reads this record and **does not invoke storage_forEachInfo or visit track
+references**. The existing music-directory scan and index validation still run;
+this change removes the additional full artwork pass, not all startup SD work.
+There is no whole-library RAM artwork manifest.
+
+During the existing music scan, collect an order-independent checksum of
+`cover.jpg` paths, sizes and modification times without opening any extra files.
+Combine it with the actual library index CRC, which already includes music file
+path/size/mtime and metadata. Added, removed or changed music/folder covers
+invalidate the checkpoint. On that boot, scan the index sequentially and reuse
+existing per-track reference signatures; only affected/missing covers need JPEG
+extraction/conversion. Changed library traversal is still O(tracks), while an
+unchanged artwork pass is O(1). Same-size, same-timestamp edits require manual
+refresh, as do metadata edits invisible to the library index. Existing library
+rescan requirements for such edits still apply.
+
+A checkpoint is committed via a temporary file only after a complete successful
+pass. Truncated/wrong-version/mismatched records and failed commits cause a safe
+rescan. Existing per-track `.ref.busy` crash guards remain active; failures prevent
+checkpoint commit and keep placeholders. These failed preparations conservatively
+retry validation on later boots, but never retry a guarded JPEG decode. Bump ACP1
+when changing preparation semantics, and the per-reference conversion version
+when RGB conversion changes.
+
+At track change, artwork still opens only a tiny reference and the cached RGB565
+asset. Missing/corrupt references/assets invalidate the checkpoint for **next
+boot**, with a placeholder now. No JPEG decoding occurs while Bluetooth runs.
+The row-at-a-time artwork display and its stack buffers are unchanged.
+
+**Setup → Refresh artwork** asks to restart, saves the resume position, and writes
+a refresh request. Before Bluetooth starts on that next boot it invalidates the
+checkpoint, removes track references, unsupported-picture markers and per-track
+crash guards, then rechecks covers. Valid content-addressed RGB assets remain and
+are reused. The request is consumed before JPEG decoding so a new crash cannot
+create an automatic decode/reboot cycle. Manual retry of a repeatedly crashing
+picture can still reset once; its new busy marker protects the following boot.
+Only invoke refresh after changing/removing a known problematic image.
+Alternatively create `/.sys/art/refresh` on the card while powered off. This does
+not touch CJK/title caches, ID3 index, pairing, GIF files or music. New labels use
+the existing English/Chinese fallback pipeline. The previously deferred branding,
+loading-percentages and boot/autoplay behavior changes remain deferred.
+
+Additional hardware tests (pending):
+
+1. First media4 boot prepares/checkpoints; second unchanged boot prints
+   `art: checkpoint current -- skipped full artwork traversal`. Compare boot
+   elapsed time with 427 songs and check an already cached cover at track change.
+2. Add/change/remove a track and a folder `cover.jpg`; confirm preparation occurs
+   once, correct affected covers update, and the following boot skips again.
+3. Remove/truncate one RGB asset: selecting that track shows a placeholder and
+   invalidates the checkpoint. Reboot repairs it without decoding during playback.
+4. Exercise Setup refresh and interrupted preparation; verify busy guards and
+   existing CJK caches survive ordinary boots. Test a read-only/full SD card for
+   graceful placeholder/checkpoint failures, not a restart loop.
+
+Host media suites include the production checkpoint code: zero traversal on a
+matching reboot, version/truncation rejection, changed fingerprints, index/
+preparation failure, failed rename, manual recovery cleanup, and retained RGB
+assets. Production storage tests verify folder-cover-only changes invalidate the
+art fingerprint without rebuilding the music index. Existing parser, JPEG,
+CJK/title recovery, cache and four-open-file-budget tests also run.
+
+Cloud validation completed with ESP32 Arduino 3.3.10, TFT_eSPI 2.5.43,
+ESP32-A2DP 1.8.11 and arduino-libhelix 0.9.4:
+
+| Image | Flash bytes | Static RAM bytes |
+|---|---:|---:|
+| E32R28T player | 1,354,529 | 56,512 |
+| E32R28T uploader | 1,149,433 | 48,980 |
+| Original ST7789 player | 1,354,453 | 56,512 |
+| Original ST7789 uploader | 1,149,365 | 48,980 |
+
+All fit the existing 1,966,080-byte application slots. Relative to media3,
+player static RAM increases **176 bytes**; uploader static RAM is unchanged.
+All seven media suites passed ASan/UBSan, including the supplied 7,284-glyph
+CJK font; resampler and mixed-rate real-Helix reset tests passed as well.
+No compiler installation or hardware flashing was performed for these changes.
+
+For local Windows compilation use the existing instructions in
+[media update steps](chonkpod_media.md#updating-and-testing-on-windows), or from
+the updated repository folder run:
+
+```powershell
+.\tools\flash_windows.ps1 -WithUploader -Python python
+```
+
+That command compiles both images without flashing. Firmware identifies itself
+as `1.2.0-chonkpod-e32r28t-media4` on E32R28T. Capture hardware logs at 115200 baud
+using `arduino-cli monitor --port COM4 --config baudrate=115200` after the local
+update. The cloud builds cannot establish real-time Bluetooth performance or
+mark the persistent slowdown resolved.
+
+ESP-IDF source reviewed:
+[btc_a2dp_source.c at v5.5.4](https://github.com/espressif/esp-idf/blob/v5.5.4/components/bt/host/bluedroid/btc/profile/std/a2dp/btc_a2dp_source.c),
+particularly setup/feeding initialization and timer-driven frame consumption.

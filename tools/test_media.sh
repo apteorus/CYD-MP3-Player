@@ -39,3 +39,7 @@ g++ "${FLAGS[@]}" "$ROOT/app/id3.cpp" "$ROOT/app/jpeg_cache.cpp" "$ROOT/app/cove
 
 g++ "${FLAGS[@]}" "$ROOT/app/id3.cpp" "$ROOT/app/storage.cpp" "$ROOT/tests/storage_index.cpp" -o "$MEDIA_BUILD/storage-test"
 "$MEDIA_BUILD/storage-test" "$MEDIA_BUILD/storage"
+
+mkdir -p "$MEDIA_BUILD/checkpoint"
+g++ "${FLAGS[@]}" "$ROOT/app/art_prepare.cpp" "$ROOT/tests/art_checkpoint.cpp" -Wl,--gc-sections -o "$MEDIA_BUILD/checkpoint-test"
+"$MEDIA_BUILD/checkpoint-test" "$MEDIA_BUILD/checkpoint"

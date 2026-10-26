@@ -98,6 +98,10 @@ static const Entry TABLE[] = {
   { "Visuals", "播放畫面" },
   { "Album artwork", "專輯封面" },
   { "Animated GIFs", "背景動畫" },
+  { "Refresh artwork", "更新封面" },
+  { "Refresh artwork and restart?", "更新封面並重新啟動？" },
+  { "Rechecks all covers at startup.", "開機時重新檢查所有封面。" },
+  { "Cannot write artwork request", "無法寫入封面更新要求" },
 };
 static_assert(sizeof(TABLE) / sizeof(TABLE[0]) == T_COUNT, "i18n TABLE does not match enum Txt");
 

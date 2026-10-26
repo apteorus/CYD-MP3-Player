@@ -27,7 +27,10 @@ int main(int argc,char**argv){
  mp3(c,progressive);assert(cover_prepare(c,tags(c)));String folder=cover_asset(c);assert(!folder.empty()&&folder!=first&&countAssets()==2);
  // Unchanged sources avoid conversion; damaged cache is regenerated.
  assert(cover_prepare(a,info)&&cover_asset(a)==first);
- std::filesystem::resize_file(SD.root+first,12);assert(cover_prepare(a,info)&&jpeg_cacheValid(first));
+ std::filesystem::resize_file(SD.root+first,12);
+ bool stale=false;assert(cover_asset(a,&stale).isEmpty()&&stale);
+ assert(cover_prepare(a,info)&&jpeg_cacheValid(first));
+ stale=true;assert(cover_asset(a,&stale)==first&&!stale);
  // Updating a folder cover invalidates its reference.
  std::filesystem::copy_file(argv[2],SD.root+"/music/album/cover.jpg",std::filesystem::copy_options::overwrite_existing);
  assert(cover_prepare(c,tags(c))&&cover_asset(c)==first);

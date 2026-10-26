@@ -180,7 +180,8 @@ git pull --ff-only
 arduino-cli monitor --port COM4 --config baudrate=115200
 ```
 
-The banner should end in `-media3`. There is no automatic erase and no need to
+The current banner should end in `-media4`; see
+[performance changes and artwork checkpoint](chonkpod_performance.md). There is no automatic erase and no need to
 change the existing TFT setup. Keep the original full-flash backup. Copy the
 previously generated font back to `/.sys/cjk16.vlw` with power off; if a font busy
 marker exists, inspect the log and remove only that marker before retrying. Do not

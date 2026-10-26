@@ -69,11 +69,18 @@ String convert(File& source) {
   return String();
 }
 }
-String cover_asset(const String& trackPath) {
+String cover_asset(const String& trackPath, bool* stale) {
+  if (stale) *stale = false;
   String stamp, asset;
-  if (!readRef(reference(trackPath), stamp, asset) || asset.isEmpty()) return String();
+  if (!readRef(reference(trackPath), stamp, asset)) {
+    if (stale) *stale = true;
+    return String();
+  }
+  if (asset.isEmpty()) return String();
   String path = "/.sys/art/" + asset;
-  return jpeg_cacheValid(path) ? path : String();
+  if (jpeg_cacheValid(path)) return path;
+  if (stale) *stale = true;
+  return String();
 }
 bool cover_prepare(const String& trackPath, const Id3Info& info) {
   if (!SD.exists("/.sys/art") && !SD.mkdir("/.sys/art")) return false;

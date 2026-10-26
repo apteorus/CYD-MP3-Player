@@ -7,21 +7,6 @@
 #include "theme.h"
 #include "ui.h"
 
-static StorageProgressFn prepareProgress = nullptr;
-static int prepareCount = 0, prepareFailed = 0;
-static void prepare(int i, const String& path, const Id3Info& info) {
-  if (!cover_prepare(path, info)) ++prepareFailed;
-  ++prepareCount;
-  if (prepareProgress) prepareProgress(i + 1, storage_trackCount());
-  if ((prepareCount & 15) == 0) Serial.printf("art: %d tracks checked, heap %u largest %u\n", prepareCount, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-  yield();
-}
-void art_prepareAll(StorageProgressFn progress) {
-  prepareCount = prepareFailed = 0; prepareProgress = progress;
-  if (!storage_forEachInfo(prepare)) ++prepareFailed;
-  prepareProgress = nullptr;
-  Serial.printf("art: prepared %d tracks, %d I/O/interrupted failures; JPEG workspace released\n", prepareCount, prepareFailed);
-}
 static File image;
 static Rect target;
 static int row = 0;
@@ -30,10 +15,12 @@ void art_stop() { image.close(); row = 0; }
 bool art_start(int track, const Rect& view) {
   art_stop();
   if (view.w <= 0 || view.h <= 0) return false;
-  const String asset = cover_asset(storage_trackPath(track));
+  bool stale = false;
+  const String asset = cover_asset(storage_trackPath(track), &stale);
+  if (stale) SD.remove("/.sys/art/prepared"); // repair at next boot, never decode here
   if (asset.isEmpty()) return false;
   image = SD.open(asset);
-  if (!image) return false;
+  if (!image) { SD.remove("/.sys/art/prepared"); return false; }
   int side = min(min(view.w, view.h), 320);
   target = {view.x + (view.w - side) / 2, view.y + (view.h - side) / 2, side, side};
   tft.fillRect(view.x, view.y, view.w, view.h, theme().bg);
@@ -46,7 +33,8 @@ void art_tick(uint32_t now) {
   unsigned sy = uint32_t(row) * ART_EDGE / target.h;
   if (!image.seek(ART_HEADER + sy * ART_EDGE * 2) ||
       image.read(reinterpret_cast<uint8_t*>(source), sizeof(source)) != sizeof(source)) {
-    Serial.println("art: cache read failed -- placeholder");
+    SD.remove("/.sys/art/prepared");
+    Serial.println("art: cache read failed -- placeholder; repair next boot");
     tft.fillRect(target.x, target.y, target.w, target.h, theme().bg);
     ui_icon(ICON_NOTE, target.cx(), target.cy(), 48, theme().dim, theme().bg);
     art_stop(); return;
