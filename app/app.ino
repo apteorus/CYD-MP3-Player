@@ -234,6 +234,15 @@ static void persistResume(uint32_t now) {
 }
 
 void loop() {
+  static uint32_t previousLoop = 0, maxLoopGap = 0, slowLoops = 0;
+  const uint32_t loopNow = millis();
+  if (previousLoop) {
+    const uint32_t gap = loopNow - previousLoop;
+    if (gap > maxLoopGap) maxLoopGap = gap;
+    if (gap > 50) ++slowLoops;
+  }
+  previousLoop = loopNow;
+
   const uint32_t now = millis();
 
   bt_tick();
@@ -255,6 +264,7 @@ void loop() {
 
   static uint32_t lastStat = 0;
   if (now - lastStat >= 10000) {
+    Serial.printf("ui-timing: loop_gap_max_ms=%lu loops_over_50ms=%lu (lifetime)\n", maxLoopGap, slowLoops);
     uint32_t frames, avgMs, maxMs, maxBytes;
     bg_takeStats(frames, avgMs);
     bg_takeMax(maxMs, maxBytes);

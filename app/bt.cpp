@@ -25,6 +25,9 @@
 // 2. Reporting what happened. Pairing results reach ESP_LOG only, which an
 //    Arduino build compiles out, so a failure was invisible and the screen
 //    just said "connecting" forever.
+static volatile uint32_t codecSerial = 0, codecHz = 0, codecType = 0xff;
+static volatile uint32_t btAudioSerial = 0, btAudioState = 0;
+
 class CydSource : public BluetoothA2DPSource {
  public:
   bool connectNow(const uint8_t addr[6], const char* name) {
@@ -71,6 +74,22 @@ class CydSource : public BluetoothA2DPSource {
 
  protected:
   void app_a2d_callback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t* param) override {
+    // Copy small event fields only; diagnostics are printed from bt_tick().
+    if (param && event == ESP_A2D_AUDIO_CFG_EVT) {
+      codecType = param->audio_cfg.mcc.type;
+      codecHz = 0;
+      if (codecType == ESP_A2D_MCT_SBC) {
+        const unsigned sf = param->audio_cfg.mcc.cie.sbc_info.samp_freq;
+        codecHz = sf == ESP_A2D_SBC_CIE_SF_44K ? 44100 :
+                  sf == ESP_A2D_SBC_CIE_SF_48K ? 48000 :
+                  sf == ESP_A2D_SBC_CIE_SF_32K ? 32000 :
+                  sf == ESP_A2D_SBC_CIE_SF_16K ? 16000 : 0;
+      }
+      ++codecSerial;
+    }
+    if (param && event == ESP_A2D_AUDIO_STATE_EVT) {
+      btAudioState = param->audio_stat.state; ++btAudioSerial;
+    }
     // Before delegating: the base calls our connection-state callback from in
     // here, and it must already be able to see who connected.
     if (param && event == ESP_A2D_CONNECTION_STATE_EVT) {
@@ -363,6 +382,12 @@ static void remember(const uint8_t addr[6], const char* name) {
 }
 
 void bt_tick() {
+  static uint32_t seenCodec = 0, seenAudio = 0;
+  if (seenCodec != codecSerial || seenAudio != btAudioSerial) {
+    seenCodec = codecSerial; seenAudio = btAudioSerial;
+    Serial.printf("bt-rate: PCM input=44100Hz stereo16 codec=%lu negotiated=%luHz audio_state=%lu cfg_events=%lu (0Hz=not reported)\n",
+      codecType, codecHz, btAudioState, seenCodec);
+  }
   const uint8_t key = pendingKey;
   if (key) {
     pendingKey = 0;

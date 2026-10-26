@@ -5,6 +5,7 @@
 #include "storage.h"
 #include "settings.h"     // RepeatMode
 #include "resettable_mp3.h"
+#include "pcm_resampler.h"
 
 // ---------------------------------------------------------------------------
 // Ring buffer: one producer (decode task), one consumer (audio_pull)
@@ -46,9 +47,29 @@ static TaskHandle_t decodeHandle = nullptr;
 // ---------------------------------------------------------------------------
 // Consumer
 // ---------------------------------------------------------------------------
+static PcmResampler resampler;
+// Each cumulative counter has one writer; readers take snapshots, never clear it.
+static volatile uint32_t generatedFrames = 0, sourceFrames = 0, sourceUs = 0;
+static volatile uint32_t sourceRate = 0, sourceChannels = 0, pcmErrors = 0;
+static volatile uint32_t producerWaitMs = 0, writeMaxMs = 0, resetCount = 0;
+static volatile uint32_t requestedFrames = 0, consumedFrames = 0, silentFrames = 0;
+static volatile uint32_t pullCalls = 0, pullMaxGapUs = 0, pullMaxWorkUs = 0;
+static uint32_t previousPullUs = 0;
+static volatile uint32_t pullGaps20 = 0, pullGaps50 = 0;
+static volatile bool drainShort = false;
+
 static volatile int32_t maxRequest = 0;
 
 void audio_pull(int16_t* out, int32_t frames) {
+  const uint32_t pullStart = micros();
+  if (previousPullUs) {
+    const uint32_t gap = pullStart - previousPullUs;
+    if (gap > pullMaxGapUs) pullMaxGapUs = gap;
+    if (gap > 20000) ++pullGaps20;
+    if (gap > 50000) ++pullGaps50;
+  }
+  previousPullUs = pullStart;
+  requestedFrames += frames; ++pullCalls;
   lastPullMs = millis();
   if (frames > maxRequest) maxRequest = frames;
   if (flushReq) {
@@ -57,7 +78,9 @@ void audio_pull(int16_t* out, int32_t frames) {
     flushReq = false;
   }
   int32_t i = 0;
-  if (playing) {
+  // A transition may take several callbacks to open/seek/decode. Start with
+  // 512 frames (~12 ms) ready instead of consuming the first few pushed frames.
+  if (playing && (!starting || rbUsed() >= 512 || drainShort)) {
     const int32_t gain = (int32_t)volumePct * volumePct;   // perceptual-ish, /10000
     uint32_t tail = rbTail;
     const int32_t n = min<int32_t>(frames, (rbHead - tail) & (RB_FRAMES - 1));
@@ -68,57 +91,50 @@ void audio_pull(int16_t* out, int32_t frames) {
     }
     rbTail = tail;
     framesPlayed += n;
+    consumedFrames += n;
     if (n > 0) starting = false;
     if (n < frames && !starting && reqTrack < 0 && reqSeekMs < 0) underruns++;
   }
+  silentFrames += frames - i;
   memset(out + i * 2, 0, (frames - i) * 2 * sizeof(int16_t));
+  const uint32_t work = micros() - pullStart;
+  if (work > pullMaxWorkUs) pullMaxWorkUs = work;
 }
 
 // ---------------------------------------------------------------------------
 // Producer: resampler and PCM callback
 // ---------------------------------------------------------------------------
 static volatile bool abortDecode = false;     // a request arrived mid-buffer
-static uint32_t rsPos = 0;                    // 16.16 phase
-static int16_t  rsPrevL = 0, rsPrevR = 0;
 
 static inline bool requestPending() { return reqTrack >= 0 || reqSeekMs >= 0; }
 
 static void pushFrame(int16_t l, int16_t r) {
+  uint32_t waitStart = 0;
+  bool waited = false;
   while (rbFree() == 0) {
+    if (!waited) { waitStart = millis(); waited = true; }
     if (requestPending()) { abortDecode = true; return; }
     vTaskDelay(pdMS_TO_TICKS(4));             // Bluetooth is the clock
   }
+  if (waited) producerWaitMs += millis() - waitStart;
   const uint32_t h = rbHead;
   rb[h * 2] = l;
   rb[h * 2 + 1] = r;
   rbHead = (h + 1) & (RB_FRAMES - 1);
+  ++generatedFrames;
 }
 
 static void onPcm(MP3FrameInfo& info, short* pcm, size_t len, void*) {
   if (abortDecode) return;
-  const int ch = info.nChans;
-  const size_t frames = len / ch;
-  if (info.samprate == 44100) {
-    for (size_t i = 0; i < frames && !abortDecode; i++) {
-      const int16_t l = pcm[i * ch];
-      pushFrame(l, ch == 2 ? pcm[i * ch + 1] : l);
-    }
-    return;
+  sourceRate = info.samprate; sourceChannels = info.nChans;
+  if (info.nChans < 1 || info.nChans > 2 || info.samprate < 8000 || info.samprate > 48000) {
+    ++pcmErrors; return;
   }
-  // Linear interpolation to 44.1 kHz for 48 k / 32 k / 22.05 k files.
-  const uint32_t step = (uint32_t)(((uint64_t)info.samprate << 16) / 44100);
-  for (size_t i = 0; i < frames && !abortDecode; i++) {
-    const int16_t l = pcm[i * ch];
-    const int16_t r = ch == 2 ? pcm[i * ch + 1] : l;
-    while (rsPos < 65536 && !abortDecode) {
-      const int32_t f = rsPos;
-      pushFrame(rsPrevL + (((int32_t)l - rsPrevL) * f >> 16),
-                rsPrevR + (((int32_t)r - rsPrevR) * f >> 16));
-      rsPos += step;
-    }
-    rsPos -= 65536;
-    rsPrevL = l; rsPrevR = r;
-  }
+  sourceFrames += len / info.nChans;
+  sourceUs += uint64_t(len / info.nChans) * 1000000 / info.samprate;
+  if (!resampler.process(pcm, len, info.nChans, info.samprate, [](int16_t l, int16_t r) {
+    pushFrame(l, r); return !abortDecode;
+  }) && !abortDecode) ++pcmErrors;
 }
 
 static ResettableMp3 mp3(onPcm);
@@ -221,8 +237,9 @@ static bool resetDecoder() {
     Serial.println("audio: decoder initialization failed");
     return false;
   }
-  rsPos = 0;
-  rsPrevL = rsPrevR = 0;
+  resampler.reset();
+  sourceRate = sourceChannels = 0;
+  ++resetCount;
   return true;
 }
 
@@ -263,7 +280,7 @@ static bool openTrack(int index, uint32_t startMs) {
   if (count == 0) return false;
   index = ((index % count) + count) % count;
 
-  starting = true;
+  starting = true; drainShort = false;
   if (file) file.close();
   requestFlush();
   if (!resetDecoder()) return false;
@@ -293,7 +310,7 @@ static bool openTrack(int index, uint32_t startMs) {
 static void seekTo(uint32_t ms) {
   if (!file) return;
   if (durationMs > 1000) ms = min(ms, durationMs - 1000);
-  starting = true;
+  starting = true; drainShort = false;
   requestFlush();
   if (!resetDecoder()) { playing = false; return; }  // discard old reservoir in place
   file.seek(alignToFrame(byteForMs(ms)));
@@ -337,9 +354,13 @@ static void decodeTask(void*) {
     const int n = file.read(buf, sizeof(buf));
     { const uint32_t took = millis() - r0; if (took > diagMaxReadMs) diagMaxReadMs = took; }
     if (n > 0) {
+      const uint32_t w0 = millis();
       mp3.write(buf, n);
+      const uint32_t took = millis() - w0;
+      if (took > writeMaxMs) writeMaxMs = took;
       continue;
     }
+    drainShort = true; // allow a final fragment shorter than the priming threshold
     // End of track: let what is buffered play out, then say so.
     while (rbUsed() > 0 && !requestPending()) vTaskDelay(pdMS_TO_TICKS(10));
     if (!requestPending()) {
@@ -444,6 +465,20 @@ void audio_begin(int startTrack, uint32_t startMs, uint8_t volume, bool shuffle,
 }
 
 void audio_tick() {
+  static uint32_t last = 0, gen = 0, src = 0, media = 0, req = 0, used = 0, silence = 0, calls = 0, wait = 0, gaps20 = 0, gaps50 = 0;
+  const uint32_t now = millis(), dt = now - last;
+  if (dt >= 5000) {
+    const uint32_t g = generatedFrames, sf = sourceFrames, su = sourceUs, r = requestedFrames;
+    const uint32_t c = consumedFrames, z = silentFrames, pc = pullCalls, w = producerWaitMs;
+    Serial.printf("rate: dt=%lu src=%luHz/%luch srcfps=%lu media_ms=%lu genfps=%lu pullfps=%lu usedfps=%lu silence=%lu calls=%lu wait_ms=%lu reset=%lu errors=%lu playing=%d starting=%d\n",
+      dt, sourceRate, sourceChannels, uint32_t(uint64_t(sf-src)*1000/dt), (su-media)/1000,
+      uint32_t(uint64_t(g-gen)*1000/dt), uint32_t(uint64_t(r-req)*1000/dt), uint32_t(uint64_t(c-used)*1000/dt),
+      z-silence, pc-calls, w-wait, resetCount, pcmErrors, playing, starting);
+    Serial.printf("timing: lifetime pull_gap_us=%lu pull_work_us=%lu decode_write_ms=%lu gaps20=%lu gaps50=%lu (maxima lifetime; write includes ring wait)\n",
+      pullMaxGapUs, pullMaxWorkUs, writeMaxMs, pullGaps20-gaps20, pullGaps50-gaps50);
+    gaps20=pullGaps20; gaps50=pullGaps50;
+    last=now; gen=g; src=sf; media=su; req=r; used=c; silence=z; calls=pc; wait=w;
+  }
   if (endedSerial != seenEnded) {
     seenEnded = endedSerial;
     failStreak = 0;

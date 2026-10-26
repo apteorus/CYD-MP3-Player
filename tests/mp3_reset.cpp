@@ -37,10 +37,13 @@ static std::pair<uint64_t, size_t> decode(ResettableMp3& decoder,
   return {hash, samples};
 }
 int main(int argc, char** argv) {
-  assert(argc == 2);
-  std::ifstream input(argv[1], std::ios::binary);
-  std::vector<char> bytes((std::istreambuf_iterator<char>(input)), {});
-  assert(bytes.size() > 16000);
+  assert(argc >= 2);
+  std::vector<std::vector<char>> fixtures;
+  for (int i = 1; i < argc; ++i) {
+    std::ifstream input(argv[i], std::ios::binary);
+    fixtures.emplace_back(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    assert(fixtures.back().size() > 16000);
+  }
   ResettableMp3 reused(pcm);
   assert(reused.resetStream());
   for (int i = 0; i < 100; ++i) {
@@ -48,6 +51,7 @@ int main(int argc, char** argv) {
     const unsigned a = allocations, f = releases;
     assert(reused.resetStream());
     assert(allocations == a && releases == f);
+    const auto& bytes = fixtures[i % fixtures.size()];
     const size_t offset = (i % 3) * 5000;
     const auto actual = decode(reused, bytes, offset);
     ResettableMp3 fresh(pcm);
