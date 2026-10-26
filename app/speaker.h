@@ -13,13 +13,9 @@
 // one speaker. The volume is already applied in 16 bits inside audio_pull(),
 // so what is left here is the truncation, which is dithered.
 //
-// THE AMPLIFIER HAS AN ENABLE, AND IT IS THE RED LED'S PIN. GPIO4 must be
-// driven LOW or the 8002E stays in shutdown and nothing is audible, whatever
-// the DAC is doing -- floating counts as shutdown too. It is also
-// CYD_RGB_R_PIN, active LOW, so the red LED is lit exactly when the amplifier
-// is on. This file enables it when the DAC starts and returns it to shutdown
-// when the DAC stops, which keeps the LED off on the Bluetooth route and while
-// nothing is playing. See board.h for how this was found.
+// The amplifier shutdown is active LOW on GPIO4. Original CYDs share it
+// with the red LED; LCDWiki E32R28T uses GPIO22 for red independently.
+// Enable only after the DAC settles, and mute before DAC teardown.
 #pragma once
 
 #include <Arduino.h>

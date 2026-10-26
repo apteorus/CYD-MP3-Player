@@ -389,3 +389,9 @@ measurements are in [docs/decisions.md](docs/decisions.md).
 Serial log: 115200 baud. Every 10 s it prints free memory, audio buffer fill and
 underruns, and background frame rate. Upload mode logs `upload:` and `auth:`
 lines.
+
+## LCDWiki E32R28T / ChonkPod source port
+
+See [README_E32R28T.md](README_E32R28T.md) for the separate ESP32-32E profile,
+Windows compilation/flashing commands, and pending bench checks. Original board
+defaults remain unchanged; the new port has not yet been compiled or hardware tested.

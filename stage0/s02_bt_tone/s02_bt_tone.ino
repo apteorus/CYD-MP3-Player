@@ -225,6 +225,7 @@ void setup() {
   Serial.println("\n=== s02 Bluetooth A2DP tone ===");
   cydPrintBanner();
 
+  cydAmpDisable();  // separate from LEDs on LCDWiki E32R28T
   cydRgbLedOff();
   tft.init();
   tft.setRotation(CYD_ROTATION);

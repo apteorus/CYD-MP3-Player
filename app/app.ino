@@ -56,21 +56,25 @@ static const char* FIRMWARE_LABEL = FIRMWARE_VERSION;
 // Each of these is a mistake with no runtime error -- a dead panel, or an SD
 // card that will not mount -- so it is worth stopping the build for.
 #ifndef USE_HSPI_PORT
-  #error "User_Setup.h is missing '#define USE_HSPI_PORT' -- the display would take VSPI, which the SD card needs. Copy config/User_Setup_2432S028R_ST7789.h.template into the TFT_eSPI library."
+  #error "User_Setup.h is missing '#define USE_HSPI_PORT' -- the display would take VSPI, which the SD card needs. Use the matching config/User_Setup_*.h.template for the selected board."
+#endif
+#if CYD_BOARD == CYD_BOARD_LCDWIKI_E32R28T && !defined(CYD_TFT_SETUP_LCDWIKI_E32R28T)
+  #error "E32R28T requires config/User_Setup_LCDWIKI_E32R28T.h.template in TFT_eSPI/User_Setup.h."
 #endif
 #if CYD_PANEL_DRIVER == CYD_PANEL_ST7789
   #if !defined(ST7789_DRIVER) && !defined(ST7789_2_DRIVER)
-    #error "board.h selects an ST7789 panel but TFT_eSPI's User_Setup.h does not define ST7789_DRIVER. Copy config/User_Setup_2432S028R_ST7789.h.template into the TFT_eSPI library."
+    #error "board.h selects an ST7789 panel but TFT_eSPI's User_Setup.h does not define ST7789_DRIVER. Use the matching config/User_Setup_*.h.template for the selected board."
   #endif
 #elif CYD_PANEL_DRIVER == CYD_PANEL_ILI9341
   #if !defined(ILI9341_DRIVER) && !defined(ILI9341_2_DRIVER)
-    #error "board.h selects an ILI9341 panel but TFT_eSPI's User_Setup.h does not define it. Copy config/User_Setup_2432S028R.h.template into the TFT_eSPI library."
+    #error "board.h selects an ILI9341 panel but TFT_eSPI's User_Setup.h does not define it. Use config/User_Setup_LCDWIKI_E32R28T.h.template for E32R28T or config/User_Setup_2432S028R.h.template for the original board."
   #endif
 #endif
 #if TFT_WIDTH != CYD_PANEL_W || TFT_HEIGHT != CYD_PANEL_H
   #error "User_Setup.h's TFT_WIDTH/TFT_HEIGHT disagree with board.h."
 #endif
-#if TFT_MOSI != CYD_TFT_MOSI_PIN || TFT_SCLK != CYD_TFT_SCLK_PIN || \
+#if TFT_MISO != CYD_TFT_MISO_PIN || TFT_RST != CYD_TFT_RST_PIN || \
+    TFT_MOSI != CYD_TFT_MOSI_PIN || TFT_SCLK != CYD_TFT_SCLK_PIN || \
     TFT_CS != CYD_TFT_CS_PIN || TFT_DC != CYD_TFT_DC_PIN
   #error "User_Setup.h's TFT pins disagree with board.h."
 #endif
@@ -140,6 +144,7 @@ static void conversionProgress(int n, int total, int frame) {
 }
 
 void setup() {
+  cydAmpDisable();  // mute before startup; independent of LEDs on E32R28T
   Serial.begin(115200);
   delay(200);
   Serial.printf("\n=== CYD MP3 player %s ===\n", FIRMWARE_LABEL);

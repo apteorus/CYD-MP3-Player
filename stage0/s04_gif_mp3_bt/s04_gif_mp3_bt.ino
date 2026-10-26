@@ -603,6 +603,7 @@ void setup() {
   cydPrintBanner();
   Serial.printf("heap at setup: %u  largest %u\n", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
+  cydAmpDisable();  // separate from LEDs on LCDWiki E32R28T
   cydRgbLedOff();
   tft.init();
   tft.setRotation(CYD_ROTATION);

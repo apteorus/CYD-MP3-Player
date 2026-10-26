@@ -1,6 +1,6 @@
 // ===========================================================================
 // board.h  --  CYD board profile (pin map + panel facts), selectable at compile
-//              time so one code base serves both boards we own.
+//              time so one code base serves original CYDs and LCDWiki E32R28T.
 // ===========================================================================
 //
 // WHY THIS FILE EXISTS
@@ -12,7 +12,8 @@
 // HOW TO SELECT A BOARD
 //   Default is the 2.8" with an ST7789 panel (CYD_BOARD_2432S028R_ST7789). For
 //   an older 2.8" with an ILI9341, or the 2.4", define CYD_BOARD before
-//   including this file, or edit the #ifndef below.
+//   including this file. For LCDWiki E32R28T pass the board macro in compiler
+//   flags; see README_E32R28T.md. Keep the original default below.
 //
 // THE PANEL CONTROLLER IS PART OF THE BOARD PROFILE
 //   Boards sold under the one part number ESP32-2432S028R ship with either an
@@ -57,6 +58,7 @@
 // ---- Board profiles -------------------------------------------------------
 #define CYD_BOARD_2432S024R        24   // 2.4", one micro-USB, backlight GPIO27
 #define CYD_BOARD_2432S028R        28   // 2.8" ILI9341, micro-USB + USB-C, BL GPIO21
+#define CYD_BOARD_LCDWIKI_E32R28T  32   // LCDWiki ESP32-32E, ILI9341V, USB-C
 #define CYD_BOARD_2432S028R_ST7789 29   // same 2.8" board, ST7789 panel instead
 
 #ifndef CYD_BOARD
@@ -66,7 +68,17 @@
 // ---------------------------------------------------------------------------
 // Per-board differences
 // ---------------------------------------------------------------------------
-#if CYD_BOARD == CYD_BOARD_2432S028R_ST7789
+#if CYD_BOARD == CYD_BOARD_LCDWIKI_E32R28T
+
+  #define CYD_BOARD_NAME "LCDWiki E32R28T (ESP32-32E, ILI9341V)"
+  #define CYD_PANEL_DRIVER CYD_PANEL_ILI9341
+  #define CYD_PANEL_NAME "ILI9341V"
+  #define CYD_TFT_BL_PIN 21
+  // Initial bring-up defaults, NOT hardware validated. Stored settings win.
+  #define CYD_TFT_INVERT 0
+  #define CYD_ROTATION 1
+
+#elif CYD_BOARD == CYD_BOARD_2432S028R_ST7789
 
   #define CYD_BOARD_NAME "ESP32-2432S028R (2.8\", micro-USB + USB-C, ST7789)"
   #define CYD_PANEL_DRIVER CYD_PANEL_ST7789   // boot default; Settings::panel wins
@@ -124,15 +136,15 @@
   #define CYD_ROTATION 3          // that unit read the right way up at 3
 
 #else
-  #error "Unknown CYD_BOARD -- set it to CYD_BOARD_2432S028R_ST7789, CYD_BOARD_2432S028R or CYD_BOARD_2432S024R"
+  #error "Unknown CYD_BOARD -- set it to CYD_BOARD_LCDWIKI_E32R28T, CYD_BOARD_2432S028R_ST7789, CYD_BOARD_2432S028R or CYD_BOARD_2432S024R"
 #endif
 
 // ---------------------------------------------------------------------------
-// Common to both boards
+// Common pin map unless explicitly selected per profile
 // ---------------------------------------------------------------------------
 
 // ---- TFT (HSPI) -----------------------------------------------------------
-// Identical on all three profiles -- ILI9341 and ST7789 sit on the same header
+// Identical on all supported profiles -- ILI9341 and ST7789 sit on the same header
 // with the same wiring, which is exactly why the wrong driver is so easy to
 // build by accident. Also set in TFT_eSPI's User_Setup.h; duplicated here so
 // sketches can check the two agree instead of silently building against a
@@ -170,11 +182,17 @@
 #define CYD_SD_CS_PIN    5
 
 // ---- Other on-board peripherals -------------------------------------------
-#define CYD_LDR_PIN     34  // ADC1, light sensor (brighter = lower reading)
-// GPIO4 IS SHARED: it is the red LED *and* the amplifier's shutdown line.
-// See CYD_AMP_ENABLE_PIN below before touching it. Driving it HIGH to turn the
-// LED off also mutes the speaker.
-#define CYD_RGB_R_PIN    4  // on-board RGB LED, all three ACTIVE LOW -- and the amp enable
+#if CYD_BOARD == CYD_BOARD_LCDWIKI_E32R28T
+  #define CYD_HAS_LDR 0
+  #define CYD_HAS_BATTERY_ADC 1
+  #define CYD_BATTERY_ADC_PIN 34  // raw ADC only; divider/calibration unverified
+  #define CYD_RGB_R_PIN 22       // independent of the amplifier shutdown pin
+#else
+  #define CYD_HAS_LDR 1
+  #define CYD_HAS_BATTERY_ADC 0
+  #define CYD_LDR_PIN 34         // ADC1 light sensor on original CYDs only
+  #define CYD_RGB_R_PIN 4        // original CYDs share red LED and amp shutdown
+#endif
 #define CYD_RGB_G_PIN   16
 #define CYD_RGB_B_PIN   17
 // The on-board amplifier and speaker pad (CN1 / P3) hang off GPIO26, which is
@@ -185,28 +203,10 @@
 #define CYD_SPEAKER_PIN      26  // DAC2, drives the small speaker pad
 #define CYD_SPEAKER_DAC_MASK DAC_CHANNEL_MASK_CH1   // GPIO26; CH0 would be GPIO25
 
-// THE AMPLIFIER'S SHUTDOWN LINE, AND WHY THE SPEAKER WAS SILENT FOR SO LONG
-//
-// The 8002E is held in shutdown unless GPIO4 is driven LOW. Floating counts as
-// shutdown, so a sketch that never touches GPIO4 gets silence, and so does one
-// that drives it HIGH -- which is exactly what cydRgbLedOff() did, on the first
-// line of setup(), to stop the red LED glowing. The player muted its own
-// amplifier on every boot, and nothing downstream of that could make a sound:
-// not the DAC, not the DMA, not even the DAC's own hardware cosine oscillator.
-//
-// GPIO4 IS THE RED LED AS WELL, and the LED is active LOW too. There is no
-// arrangement in which the amplifier runs and the red LED is dark -- they are
-// the same pin and the same polarity. The trade is therefore unavoidable, and
-// the player makes it the narrow way: speaker.cpp enables the amp only while
-// the DAC is actually running, so the red LED is lit while sound is playing
-// through the speaker and dark the rest of the time. On the Bluetooth route it
-// never comes on at all.
-//
-// Found by holding a tone on GPIO26 and walking every other pin: GPIO4 LOW
-// sounded three times out of three, GPIO16 none out of three. Boards sold under
-// this part number vary, so if a different one is silent, suspect this pin
-// first and re-run that sweep before suspecting the firmware.
-#define CYD_AMP_ENABLE_PIN 4        // ACTIVE LOW. Same pin as CYD_RGB_R_PIN.
+// Active LOW on all supported boards. Only original CYDs share this with red.
+// E32R28T has an independent red LED on GPIO22; LED helpers must not mute it.
+#define CYD_AMP_ENABLE_PIN 4
+#define CYD_AMP_SHARES_RED_LED (CYD_AMP_ENABLE_PIN == CYD_RGB_R_PIN)
 
 // ---------------------------------------------------------------------------
 // Small runtime helpers (Arduino only)
@@ -230,10 +230,8 @@ inline void cydBacklightOff() {
 // Park the on-board RGB LED. It is active LOW, so it powers up glowing white
 // and washes out the panel's colours if left alone.
 //
-// Driving the red channel HIGH also puts the amplifier into shutdown, because
-// they are the same pin (CYD_AMP_ENABLE_PIN). That is the right state at boot:
-// silent until something asks for sound. speaker.cpp takes GPIO4 back when the
-// DAC starts and returns it here when the DAC stops.
+// On original CYDs only, parking red also mutes the shared amplifier pin.
+// Call cydAmpDisable() separately at boot: E32R28T has independent pins.
 inline void cydRgbLedOff() {
   pinMode(CYD_RGB_R_PIN, OUTPUT);
   pinMode(CYD_RGB_G_PIN, OUTPUT);
@@ -243,19 +241,17 @@ inline void cydRgbLedOff() {
   digitalWrite(CYD_RGB_B_PIN, HIGH);
 }
 
-// The on-board amplifier. ACTIVE LOW, and the same pin as the red LED, so
-// enabling the amp lights the red LED -- see CYD_AMP_ENABLE_PIN above.
+// The amplifier is active LOW. It lights red only on shared-pin boards.
 inline void cydAmpEnable() {
   pinMode(CYD_AMP_ENABLE_PIN, OUTPUT);
   digitalWrite(CYD_AMP_ENABLE_PIN, LOW);
 }
 
-// Shutdown. Leaves the pin driven HIGH rather than floating: a floating GPIO4
-// is also shutdown, but it lets the red LED glow at whatever the leakage
-// decides, which looks like a fault.
+// Shutdown. Drive HIGH rather than floating; on shared-pin CYDs this also
+// keeps the red LED dark. Preload the latch before enabling the output.
 inline void cydAmpDisable() {
+  digitalWrite(CYD_AMP_ENABLE_PIN, HIGH);  // preload shutdown before output mode
   pinMode(CYD_AMP_ENABLE_PIN, OUTPUT);
-  digitalWrite(CYD_AMP_ENABLE_PIN, HIGH);
 }
 
 // Identification banner, printed at the top of every sketch so
@@ -278,8 +274,8 @@ inline void cydPrintBanner() {
                 CYD_TOUCH_CS_PIN, CYD_TOUCH_IRQ_PIN);
   Serial.printf("sd      : MOSI%d MISO%d SCK%d CS%d (VSPI)\n",
                 CYD_SD_MOSI_PIN, CYD_SD_MISO_PIN, CYD_SD_SCK_PIN, CYD_SD_CS_PIN);
-  Serial.printf("speaker : GPIO%d (DAC), amp enable GPIO%d active LOW (= red LED)\n",
-                CYD_SPEAKER_PIN, CYD_AMP_ENABLE_PIN);
+  Serial.printf("speaker : GPIO%d (DAC), amp enable GPIO%d active LOW, shared red LED: %s\n",
+                CYD_SPEAKER_PIN, CYD_AMP_ENABLE_PIN, CYD_AMP_SHARES_RED_LED ? "yes" : "no");
 }
 
 #endif  // ARDUINO

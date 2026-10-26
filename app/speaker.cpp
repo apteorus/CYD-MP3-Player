@@ -76,7 +76,7 @@ static bool dacStart() {
   dac_continuous_write(dac, mono, CHUNK, &loaded, 200);
   lastLevel = 128;
 
-  cydAmpEnable();          // GPIO4 LOW. Lights the red LED: same pin (board.h).
+  cydAmpEnable();          // Active LOW; lights red only on original shared-pin CYDs.
 
   Serial.printf("speaker: DAC on GPIO%d at 44100 Hz, amp on GPIO%d  heap %u\n",
                 CYD_SPEAKER_PIN, CYD_AMP_ENABLE_PIN, ESP.getFreeHeap());

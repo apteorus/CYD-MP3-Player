@@ -9,6 +9,7 @@
 
 #include <Arduino.h>
 #include "board.h"
+#include "speaker.h"
 
 // What the time readout under the progress bar shows. Tapping it cycles.
 enum TimeMode : uint8_t {
@@ -49,9 +50,12 @@ struct Settings {
 
   // Player
   uint8_t  volume     = 40;                 // 0-100
-  // Where the sound comes out: OUT_SPEAKER / OUT_BT (speaker.h). The on-board
-  // speaker by default, so a board that has never been paired makes a noise.
-  uint8_t  outRoute   = 0;                  // OUT_SPEAKER
+  // Board-specific first boot only; settings_begin() preserves saved routes.
+#if CYD_BOARD == CYD_BOARD_LCDWIKI_E32R28T
+  uint8_t  outRoute   = OUT_BT;
+#else
+  uint8_t  outRoute   = OUT_SPEAKER;
+#endif
   uint16_t lastTrack  = 0;                  // resume point: track index...
   uint32_t lastPosMs  = 0;                  // ...and position in it
   uint8_t  timeMode   = TIME_ELAPSED;
