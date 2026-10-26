@@ -5,7 +5,8 @@ working from `apteorus/CYD-MP3-Player` commit
 `404332e93974f4f70392b613c9f3dfb25e1b89b8`.
 Supports the **resistive-touch E32R28T**, not E32N28T.
 [Manufacturer reference](https://www.lcdwiki.com/2.8inch_ESP32-32E_Display).
-No compilation or hardware testing has been performed for this port.
+The initial port compiled on Linux and Windows; the seek1 follow-up is tested
+on Linux. Full hardware validation remains pending.
 
 The original ST7789 default and both original ILI9341 profiles remain available.
 The E32R28T profile is selected with
@@ -129,3 +130,37 @@ recalibration available; no erase is required to adjust settings.
 Retain Apache-2.0 license and upstream attribution, plus dependency/vendor
 notices, when redistributing. This is a derived ChonkPod build with suffix
 `1.2.0-chonkpod-e32r28t`, not an official upstream release.
+
+## Seek crash follow-up (seek1)
+
+A reported seek abort maps against the Linux build to the Helix buffer allocation
+inside end()/begin(); exact Windows symbols require the matching Windows ELF.
+Reset now retains allocated buffers and clears compressed data, reservoir, DSP
+history and resampler state. It does not flush samples from the old position.
+This depends on the pinned v0.9.4 software decoder layout: review the adapter
+before upgrading arduino-libhelix. Host regression checks perform 100 resets,
+assert no allocations/frees during reset, and compare resulting PCM against a
+fresh decoder. Physical seek/reconnect tests remain required.
+
+To install this update locally, close the serial monitor, then:
+
+```powershell
+git pull --ff-only
+.\tools\flash_windows.ps1 -WithUploader -Flash -Port COM4 -Python python
+```
+
+For missing non-Latin titles, the boot message about `/.sys/cjk16.vlw` means the
+font is absent, not necessarily that ID3 parsing failed. On Windows:
+
+```powershell
+python -m pip install Pillow
+python tools/gen_cjk_font.py
+```
+
+Copy generated `sdcard/.sys/cjk16.vlw` to `/.sys/cjk16.vlw` on the SD card, or
+upload via the uploader's Title font tab. Windows must have a supported CJK font
+(e.g. Microsoft JhengHei at `C:/Windows/Fonts/msjh.ttc`). Reboot the player to
+render title strips. Folder sources are reached by opening Library then tapping
+the current list name in its header. Album-art display is not implemented.
+If titles remain absent after installing the font, provide one affected MP3 and
+its `/.sys/library.idx` entry for parsing diagnosis; do not erase the card.

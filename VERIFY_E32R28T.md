@@ -75,3 +75,38 @@ as compile-time or hardware validation.
 Apache-2.0 project license retained. Preserve upstream attribution and third-party
 library/vendor licenses and notices when distributing a derived build. No binary
 redistribution is included in this task.
+
+## Subsequent playback/seek investigation
+
+The earlier sections record the initial source-only handoff. Both firmware images
+were subsequently built on Linux, and the user also reported successful Windows
+builds and multi-track playback with a Jawbone Mini Jambox.
+
+The supplied crash occurred on seeking. Resolving its addresses against our Linux
+ELF maps the abort to C++ termination during Helix Vector allocation, reached via
+CommonHelix::begin → resetDecoder → seekTo/decodeTask. The Windows binary differs
+slightly, so exact symbol confirmation requires that build's ELF; this is strong
+supporting evidence rather than an exact-ELF crash decode. Steady playback shows
+stable heap and no rising underruns within tracks; the log does not establish a
+board-pin or receiver compatibility fault.
+
+`app/resettable_mp3.h` replaces end/begin churn with an in-place reset matching
+v0.9.4 AllocateBuffers' zero initialization while retaining all allocations.
+The wrapper clears compressed input, PCM scratch, frame counters, full MP3 state
+and all seven DSP blocks, including reservoir and synthesis history. It does not
+flush old-position audio. `audio.cpp` resets resampling state and checks failure.
+The local E32R28T version suffix is `-seek1` for identifying the update.
+
+Regression runner: `HELIX_SOURCE=/path/to/arduino-libhelix/src bash tools/test_mp3_reset.sh`.
+Uses the actual pinned decoder sources and an ffmpeg-generated stereo MP3, no
+mock decoder: 100 resets allocate/free nothing and match the PCM hash/sample count
+of a newly initialized decoder at three byte offsets. Test logging shims only
+replace Arduino logging macros absent on the host; assertions remain enabled.
+The player and uploader are compiled again on Linux. Bench verification of
+repeated seeking, track changes, pause/reconnect and original-board playback is
+still required; there is no claim of a hardware-confirmed fix.
+
+Metadata findings: the log reports 18 folders and a missing CJK title font.
+Album artwork is not implemented. Non-Latin titles may be read correctly but
+invisible with the ASCII fallback. No speculative ID3 changes were made; an
+affected MP3 is needed if installing the font does not resolve missing titles.

@@ -4,7 +4,7 @@
 #include "audio.h"
 #include "storage.h"
 #include "settings.h"     // RepeatMode
-#include "MP3DecoderHelix.h"
+#include "resettable_mp3.h"
 
 // ---------------------------------------------------------------------------
 // Ring buffer: one producer (decode task), one consumer (audio_pull)
@@ -121,7 +121,7 @@ static void onPcm(MP3FrameInfo& info, short* pcm, size_t len, void*) {
   }
 }
 
-static libhelix::MP3DecoderHelix mp3(onPcm);
+static ResettableMp3 mp3(onPcm);
 
 // ---------------------------------------------------------------------------
 // Track opening: ID3 skip, duration, seek
@@ -216,11 +216,14 @@ static void requestFlush() {
   }
 }
 
-static void resetDecoder() {
-  mp3.end();
-  mp3.begin();
+static bool resetDecoder() {
+  if (!mp3.resetStream()) {
+    Serial.println("audio: decoder initialization failed");
+    return false;
+  }
   rsPos = 0;
   rsPrevL = rsPrevR = 0;
+  return true;
 }
 
 // Byte offset for a time. Proportional over the audio data: exact for CBR,
@@ -263,7 +266,7 @@ static bool openTrack(int index, uint32_t startMs) {
   starting = true;
   if (file) file.close();
   requestFlush();
-  resetDecoder();
+  if (!resetDecoder()) return false;
 
   curTrack = index;
   file = SD.open(storage_trackPath(index));
@@ -292,7 +295,7 @@ static void seekTo(uint32_t ms) {
   if (durationMs > 1000) ms = min(ms, durationMs - 1000);
   starting = true;
   requestFlush();
-  resetDecoder();                             // mid-stream bit reservoir is invalid now
+  if (!resetDecoder()) { playing = false; return; }  // discard old reservoir in place
   file.seek(alignToFrame(byteForMs(ms)));
   posBaseMs = ms;
   framesPlayed = 0;
