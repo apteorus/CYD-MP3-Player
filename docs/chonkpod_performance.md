@@ -1,5 +1,9 @@
 # Playback timing and artwork startup
 
+For the subsequent media4 hardware capture and targeted A2DP investigation, see
+[chonkpod_a2dp_investigation.md](chonkpod_a2dp_investigation.md). Its probe is not
+a verified slowdown fix; the SDK allocation patch is a separate proposal.
+
 ## Audio investigation
 
 The reported full ring, stable underrun count and persistent slowdown do **not**

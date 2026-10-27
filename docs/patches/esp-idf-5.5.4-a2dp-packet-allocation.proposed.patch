@@ -1,0 +1,18 @@
+--- a/components/bt/host/bluedroid/btc/profile/std/a2dp/btc_a2dp_source.c
++++ b/components/bt/host/bluedroid/btc/profile/std/a2dp/btc_a2dp_source.c
+@@ -1322,7 +1322,14 @@
+                              a2dp_source_local_param.btc_aa_src_cb.encoder.s16NumOfBlocks;
+ 
+     while (nb_frame) {
+-        if (NULL == (p_buf = osi_malloc(BTC_MEDIA_AA_BUF_SIZE))) {
++        /* Keep the negotiated packet limit unchanged. Reserve at least 1024
++         * payload bytes for the first SBC frame (all standard SBC frames fit),
++         * but do not allocate 4112 bytes for a small negotiated MTU. */
++        const UINT32 payload_bytes = max((UINT32)1024,
++                (UINT32)a2dp_source_local_param.btc_aa_src_cb.TxAaMtuSize);
++        const UINT32 packet_bytes = min((UINT32)BTC_MEDIA_AA_BUF_SIZE,
++                payload_bytes + BTC_MEDIA_AA_SBC_OFFSET + (UINT32)sizeof(BT_HDR));
++        if (NULL == (p_buf = osi_malloc(packet_bytes))) {
+             APPL_TRACE_ERROR ("ERROR btc_media_aa_prep_sbc_2_send no buffer TxCnt %d ",
+                               fixed_queue_length(a2dp_source_local_param.btc_aa_src_cb.TxAaQ));
+             return;

@@ -9,6 +9,9 @@ The original port compiled on Linux and Windows. The media4 revision builds
 on Linux; current media changes still need Windows and hardware verification.
 See [media changes and update steps](docs/chonkpod_media.md) and
 [playback timing, artwork startup and hardware checks](docs/chonkpod_performance.md).
+The current `-media4-btprobe1` diagnostic adds targeted A2DP telemetry; see
+[the investigation and separate SDK patch proposal](docs/chonkpod_a2dp_investigation.md).
+It is not a verified slowdown fix.
 
 The original ST7789 default and both original ILI9341 profiles remain available.
 The E32R28T profile is selected with
