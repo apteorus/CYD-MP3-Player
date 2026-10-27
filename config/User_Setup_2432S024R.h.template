@@ -43,6 +43,7 @@
 #define TFT_CS   15
 #define TFT_DC    2
 #define TFT_RST  -1
+#define USE_HSPI_PORT   // Reserve VSPI for SD, as required by the player.
 
 // Backlight left at boot default for v1; do not let TFT_eSPI drive it.
 // (No TFT_BL / TFT_BACKLIGHT_ON defines on purpose.)
