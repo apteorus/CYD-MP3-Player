@@ -403,3 +403,5 @@ ID3 index, and cached JPEG album artwork in the Classic layout. Select
 **Setup → Visuals → Album artwork**; animated GIFs remain the default. JPEG support
 is bundled and needs no additional library installation. See
 [media changes, memory budget and update/bench instructions](docs/chonkpod_media.md).
+
+ChonkPod media5: [project-local A2DP SDK allocation fix and verified Windows updates](docs/chonkpod_a2dp_fix.md).

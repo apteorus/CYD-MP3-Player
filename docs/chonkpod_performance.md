@@ -1,5 +1,8 @@
 # Playback timing and artwork startup
 
+For the current media5 SDK fix and verified build/flash workflow, see
+[chonkpod_a2dp_fix.md](chonkpod_a2dp_fix.md). The media4 results below are historical.
+
 For the subsequent media4 hardware capture and targeted A2DP investigation, see
 [chonkpod_a2dp_investigation.md](chonkpod_a2dp_investigation.md). Its probe is not
 a verified slowdown fix; the SDK allocation patch is a separate proposal.

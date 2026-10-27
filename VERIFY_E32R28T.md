@@ -124,3 +124,9 @@ both firmware images for E32R28T and the original default ST7789 profile. The
 MP3 decoder and ring implementation were not modified by the media work. Hardware
 validation of this revision remains pending; prior successful playback/seek tests
 predate these media changes. No device was flashed by the cloud agent.
+
+## media5 SDK allocation integration
+
+See [link-audit evidence, regression coverage and pending hardware acceptance](docs/chonkpod_a2dp_fix.md).
+The source component is built inside the sketch; the installed SDK is unchanged.
+Windows flashing now requires the post-link audit to pass first.

@@ -1,9 +1,11 @@
 # Persistent A2DP rate reduction: media4 investigation
 
-Status: **narrow diagnostic firmware plus a tested SDK patch proposal**.
-No SDK/library binary has been patched, no broad architecture changes have been
-made, and the hardware slowdown is **not yet verified fixed**. Firmware banner:
-`1.2.0-chonkpod-e32r28t-media4-btprobe1` (original boards omit `e32r28t-`).
+Historical record of the **media4-btprobe1 diagnostic/proposal phase** below.
+Subsequent hardware results confirmed that seven-callback groups correspond
+almost one-for-one to 4112-byte allocation failures. The allocation fix is now
+integrated in media5; see [implementation and current build/flash instructions](chonkpod_a2dp_fix.md).
+The new binary still needs local hardware acceptance. Statements about pending
+confirmation or an unapplied proposal below describe the earlier investigation.
 
 ## What the supplied capture establishes
 
@@ -116,7 +118,7 @@ registrant. Preserve/compose it if a future component also needs that hook.
 ## Proposed fix, before broader integration
 
 The reviewable proposal is
-[esp-idf-5.5.4-a2dp-packet-allocation.proposed.patch](patches/esp-idf-5.5.4-a2dp-packet-allocation.proposed.patch).
+[esp-idf-5.5.4-a2dp-packet-allocation.patch](patches/esp-idf-5.5.4-a2dp-packet-allocation.patch).
 It changes **one allocation site**, not timers, codec configuration, MP3 buffers,
 SBC quality, queue limits or packet timestamps:
 

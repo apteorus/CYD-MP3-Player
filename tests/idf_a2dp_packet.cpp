@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstddef>
+#include <vector>
+#include "bt_sdk_patch.h"
 using UINT8=uint8_t; using UINT16=uint16_t; using UINT32=uint32_t;
 using std::min; using std::max;
 #define TRUE true
@@ -40,11 +42,13 @@ struct alignas(max_align_t) Allocation {size_t size;};
 static size_t budget=8180, live=0, maxRequest=0;
 static unsigned failures=0, reads=0;
 static bool underflow=false;
+static std::vector<uint8_t> wire;
 static BT_HDR* osi_malloc(size_t n) {
  maxRequest=max(maxRequest,n);
  if(n>budget-live){++failures;return nullptr;}
  auto* p=static_cast<Allocation*>(malloc(sizeof(Allocation)+n));assert(p);p->size=n;live+=n;return reinterpret_cast<BT_HDR*>(p+1);
 }
+extern "C" void* osi_malloc_func(size_t n) { return osi_malloc(n); }
 static void osi_free(void* p) {auto* a=static_cast<Allocation*>(p)-1;live-=a->size;free(a);}
 static unsigned fixed_queue_length(Queue* q){return q->count;}
 static void fixed_queue_enqueue(Queue* q,BT_HDR* p,int){assert(q->count<64);q->items[q->count++]=p;}
@@ -53,20 +57,35 @@ static bool btc_media_aa_read_feeding(){if(underflow)return false;++reads;return
 static void SBC_Encoder(Encoder* e){memset(e->pu8Packet,0x55,e->u16PacketLength);}
 #include "packet_original.inc"
 #include "packet_proposed.inc"
+#define chonkpod_a2dp_packet_alloc(n) static_cast<BT_HDR*>(::chonkpod_a2dp_packet_alloc(n))
+#include "packet_integrated.inc"
+#undef chonkpod_a2dp_packet_alloc
 using Prepare=void(*)(UINT8);
 static unsigned run(Prepare fn,size_t bytes) {
- budget=bytes;live=failures=reads=maxRequest=0;uint32_t phase=0;
+ budget=bytes;live=failures=reads=maxRequest=0;uint32_t phase=0;wire.clear();
+ a2dp_source_local_param.btc_aa_src_cb.timestamp=0;
  for(int tick=0;tick<300;++tick) {
   phase+=44100*30;unsigned n=phase/(128*1000);phase%=128*1000;
-  fn(n);btc_a2dp_source_flush_q(&queue);assert(!live);
+  fn(n);
+  for(unsigned i=0;i<queue.count;++i) {
+   auto* p=queue.items[i];
+   for(unsigned value:{unsigned(p->len),unsigned(p->offset),unsigned(p->layer_specific)}) {
+    wire.push_back(value&255);wire.push_back(value>>8);
+   }
+   auto* data=reinterpret_cast<uint8_t*>(p+1);
+   wire.insert(wire.end(),data,data+4); // RTP timestamp, not uninitialized padding
+   wire.insert(wire.end(),data+p->offset,data+p->offset+p->len);
+  }
+  btc_a2dp_source_flush_q(&queue);assert(!live);
  }
  return reads;
 }
 int main() {
  const unsigned healthy=run(packet_original,16384);assert(healthy==3100&&failures==0);
  const unsigned slow=run(packet_original,8180);assert(slow==2100&&failures==300);
- const unsigned fixed=run(packet_proposed,8180);assert(fixed==healthy&&!failures&&maxRequest==1056);
- printf("PASS: actual IDF function: healthy %.1f, one-4112-buffer %.1f, proposed allocation %.1f PCM frames/s\n",
+ const unsigned fixed=run(packet_integrated,8180);assert(fixed==healthy&&!failures&&maxRequest==1056);
+ assert(strcmp(chonkpod_a2dp_patch_id(),"idf5.5.4-mtualloc-v1")==0);
+ printf("PASS: actual IDF function: healthy %.1f, one-4112-buffer %.1f, integrated allocation %.1f PCM frames/s\n",
    healthy*128/9.0,slow*128/9.0,fixed*128/9.0);
  // ASan checks packet bounds across MTUs and worst legal standard SBC frame.
  for(unsigned mtu:{48U,128U,672U,900U,1005U,2048U,4080U}) {
@@ -74,7 +93,9 @@ int main() {
   state.TxAaMtuSize=mtu;
   for(unsigned len:{119U,524U}) {
    state.encoder.u16PacketLength=len;
-   assert(run(packet_proposed,65536)==healthy&&!failures);
+   assert(run(packet_original,65536)==healthy&&!failures);auto expected=wire;
+   assert(run(packet_proposed,65536)==healthy&&!failures&&wire==expected);
+   assert(run(packet_integrated,65536)==healthy&&!failures&&wire==expected);
    assert(maxRequest<=4112);
   }
  }
@@ -83,5 +104,9 @@ int main() {
  budget=16384;live=0;packet_proposed(11);assert(!live);s.tx_flush=false;
  underflow=true;s.media_feeding_state.pcm.counter=0;
  packet_proposed(10);assert(s.media_feeding_state.pcm.counter==10*512);btc_a2dp_source_flush_q(&queue);assert(!live);
- puts("PASS: MTU/maximum SBC packet bounds, unchanged flush and PCM-underflow paths");
+ underflow=false;
+ assert(run(packet_integrated,0)==0&&failures==300);
+ ChonkpodA2dpPacketStats stats{};chonkpod_a2dp_packet_stats(&stats);
+ assert(stats.failures>=300&&stats.min_bytes==1056&&stats.max_bytes<=4112);
+ puts("PASS: integrated C allocator, packet payload/timestamp/MTU equivalence, bounds, flush, PCM-underflow and OOM diagnostics");
 }

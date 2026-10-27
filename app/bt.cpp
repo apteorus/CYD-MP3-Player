@@ -10,6 +10,7 @@
 #include <esp_gap_bt_api.h>
 #include <esp_heap_caps.h>
 #include "bt_feed_stats.h"
+#include "bt_sdk_patch.h"
 
 static BtFeedStats feedStats;
 static void failedAllocation(size_t size, uint32_t caps, const char*) {
@@ -343,6 +344,7 @@ static int32_t onData(Frame* frames, int32_t count) {
 }
 
 void bt_begin() {
+  Serial.printf("bt-sdk: %s (project-local component)\n", chonkpod_a2dp_patch_id());
   // Register before the stack starts. This hook must never log or inspect heap.
   const esp_err_t hook = heap_caps_register_failed_alloc_callback(failedAllocation);
   Serial.printf("bt-probe: allocation hook=%d; callback groups use >=5000us gaps\n", hook);
@@ -421,6 +423,10 @@ void bt_tick() {
       heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
     Serial.printf("bt-link: power_mode=%lu interval_slots=%lu events=%lu (255=not reported)\n",
       powerMode, powerInterval, powerEvents);
+    ChonkpodA2dpPacketStats packet{};
+    chonkpod_a2dp_packet_stats(&packet);
+    Serial.printf("bt-packet: allocations=%lu failures=%lu last=%lu min=%lu max=%lu bytes\n",
+      packet.allocations, packet.failures, packet.last_bytes, packet.min_bytes, packet.max_bytes);
     lastFeedStat=feedNow; previous=s;
   }
   static uint32_t seenCodec = 0, seenAudio = 0;

@@ -50,7 +50,9 @@ PLAYER="$ROOT/app/build/release-player"
 UPLOADER="$ROOT/app/build/release-uploader"
 
 echo "== player"
-"$CLI" compile --fqbn "$FQBN" --clean --output-dir "$PLAYER" app | grep -E "Sketch uses|Global"
+"$CLI" compile --fqbn "$FQBN" --clean --build-path "$ROOT/app/build/release-player-cache" --output-dir "$PLAYER" app | grep -E "Sketch uses|Global"
+"${CHONKPOD_PYTHON:-python3}" tools/verify_a2dp_link.py --build-dir "$ROOT/app/build/release-player-cache"
+cp "$ROOT/app/build/release-player-cache/a2dp-link-audit.json" "$PLAYER/"
 echo "== uploader"
 "$CLI" compile --fqbn "$FQBN" --clean \
     --build-property "compiler.cpp.extra_flags=-DCYD_UPLOADER" \

@@ -74,8 +74,17 @@ echo "sketch : $SKETCH"
 echo "port   : $PORT"
 echo
 
-"$CLI" compile --fqbn "$FQBN" "$SKETCH" || exit 1
-"$CLI" upload  --fqbn "$FQBN" -p "$PORT" "$SKETCH" || {
+UPLOAD_ARGS=()
+if [ "$SKETCH" = app ]; then
+  PLAYER_BUILD="$ROOT/app/build/player-cache"
+  PLAYER_OUT="$ROOT/app/build/player"
+  "$CLI" compile --fqbn "$FQBN" --build-path "$PLAYER_BUILD" --output-dir "$PLAYER_OUT" "$SKETCH" || exit 1
+  "${CHONKPOD_PYTHON:-python3}" tools/verify_a2dp_link.py --build-dir "$PLAYER_BUILD" || exit 1
+  UPLOAD_ARGS=(--input-dir "$PLAYER_OUT")
+else
+  "$CLI" compile --fqbn "$FQBN" "$SKETCH" || exit 1
+fi
+"$CLI" upload  --fqbn "$FQBN" -p "$PORT" "${UPLOAD_ARGS[@]}" "$SKETCH" || {
   echo
   echo "Upload failed. Things that cause this on a CYD:" >&2
   echo "  * both USB connectors plugged in at once" >&2

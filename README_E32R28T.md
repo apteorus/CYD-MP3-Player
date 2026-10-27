@@ -5,13 +5,12 @@ working from `apteorus/CYD-MP3-Player` commit
 `404332e93974f4f70392b613c9f3dfb25e1b89b8`.
 Supports the **resistive-touch E32R28T**, not E32N28T.
 [Manufacturer reference](https://www.lcdwiki.com/2.8inch_ESP32-32E_Display).
-The original port compiled on Linux and Windows. The media4 revision builds
-on Linux; current media changes still need Windows and hardware verification.
-See [media changes and update steps](docs/chonkpod_media.md) and
-[playback timing, artwork startup and hardware checks](docs/chonkpod_performance.md).
-The current `-media4-btprobe1` diagnostic adds targeted A2DP telemetry; see
-[the investigation and separate SDK patch proposal](docs/chonkpod_a2dp_investigation.md).
-It is not a verified slowdown fix.
+The port has been built on Linux and Windows. The current **media5** revision
+integrates the confirmed A2DP packet-allocation fix into a project-local SDK
+component. See [exact Windows build/flash steps, link verification and acceptance tests](docs/chonkpod_a2dp_fix.md).
+Hardware acceptance of the new media5 binary remains pending local testing.
+See also [media features](docs/chonkpod_media.md) and
+[the earlier diagnostic investigation](docs/chonkpod_a2dp_investigation.md).
 
 The original ST7789 default and both original ILI9341 profiles remain available.
 The E32R28T profile is selected with
@@ -134,7 +133,7 @@ recalibration available; no erase is required to adjust settings.
 
 Retain Apache-2.0 license and upstream attribution, plus dependency/vendor
 notices, when redistributing. This is a derived ChonkPod build with suffix
-`1.2.0-chonkpod-e32r28t-media4`, not an official upstream release.
+`1.2.0-chonkpod-e32r28t-media5`, not an official upstream release.
 
 ## Seek crash follow-up (seek1)
 

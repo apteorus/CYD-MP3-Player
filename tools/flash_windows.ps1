@@ -1,4 +1,4 @@
-# Initial port builds were executed on Windows by the user; media3 needs a new local build.
+# Project-local media5 SDK rebuild; installed Arduino core remains unchanged.
 # Compile by default; writing hardware requires explicit -Flash and -Port.
 [CmdletBinding()]
 param(
@@ -6,7 +6,7 @@ param(
     [switch]$Flash,
     [string]$Port,
     [string]$ArduinoCli = 'arduino-cli',
-    [string]$Python = 'py'
+    [string]$Python = 'python'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -31,6 +31,7 @@ try {
     foreach ($Target in $Targets) {
         Copy-Item 'config/board.h' (Join-Path $Target 'board.h') -Force
     }
+    Invoke-Checked $Python @('tools/verify_a2dp_link.py', '--sources-only')
     # Separate build paths prevent player/uploader object contamination.
     # Both C and C++ flags apply the identical board selection to all sources.
     $Common = @('compile', '--fqbn', $Fqbn, '--warnings', 'none', '--jobs', '4')
@@ -38,6 +39,10 @@ try {
         '--build-property', "compiler.cpp.extra_flags=$BoardFlag",
         '--build-property', "compiler.c.extra_flags=$BoardFlag",
         '--build-path', "$Player/cache", '--output-dir', $Player, 'app'))
+    # Fail before any flash if the SDK override was not selected by the linker.
+    Invoke-Checked $Python @('tools/verify_a2dp_link.py', '--build-dir', "$Player/cache")
+    Copy-Item "$Player/cache/a2dp-link-audit.json" $Player -Force
+    Copy-Item "$Player/cache/a2dp-allocator-disassembly.txt" $Player -Force
     if ($WithUploader) {
         Invoke-Checked $ArduinoCli ($Common + @(
             '--build-property', "compiler.cpp.extra_flags=$BoardFlag -DCYD_UPLOADER",
@@ -50,7 +55,7 @@ try {
     $Dirty = & git status --porcelain
     if ($LASTEXITCODE -ne 0) { throw 'Cannot record source status.' }
     @("source=$Revision", "dirty=$([bool]$Dirty)", "board=LCDWIKI_E32R28T",
-      "fqbn=$Fqbn", "uploader=$WithUploader") |
+      "fqbn=$Fqbn", "uploader=$WithUploader", "a2dp_patch=idf5.5.4-mtualloc-v1") |
         Set-Content (Join-Path $Player 'source.txt')
     if ($WithUploader) { Copy-Item (Join-Path $Player 'source.txt') $Uploader -Force }
     if ($Flash) {

@@ -62,24 +62,35 @@ for sketch in "${SKETCHES[@]}"; do
   if [ -n "$FILTER" ] && [[ "$sketch" != "$FILTER"* ]]; then continue; fi
 
   printf '%-34s ' "$sketch"
-  out="$("$CLI" compile --fqbn "$FQBN" --warnings none "$sketch" 2>&1)"
-  # The app also builds its uploader image, into its own folder and cache.
-  if [ $? -eq 0 ] && [ "$sketch" = "app" ]; then
-    echo "OK    $(echo "$out" | grep -m1 'Sketch uses' | sed 's/Sketch uses //; s/ bytes.*(\([0-9]*%\)).*/ B flash (\1)/')  [player]"
-    printf '%-34s ' "app (uploader)"
-    out="$("$CLI" compile --fqbn "$FQBN" --warnings none \
-            --build-property "compiler.cpp.extra_flags=-DCYD_UPLOADER" \
-            --build-property "compiler.c.extra_flags=-DCYD_UPLOADER" \
-            --build-path "$ROOT/app/build/uploader-cache" "$sketch" 2>&1)"
+  if [ "$sketch" = app ]; then
+    out="$("$CLI" compile --fqbn "$FQBN" --warnings none --build-path "$ROOT/app/build/player-cache" "$sketch" 2>&1)"
+  else
+    out="$("$CLI" compile --fqbn "$FQBN" --warnings none "$sketch" 2>&1)"
   fi
-  if [ $? -eq 0 ]; then
+  result=$?
+  if [ "$result" -eq 0 ] && [ "$sketch" = app ]; then
+    audit="$("${CHONKPOD_PYTHON:-python3}" tools/verify_a2dp_link.py --build-dir "$ROOT/app/build/player-cache" 2>&1)"
+    result=$?
+    out="$out
+$audit"
+    if [ "$result" -eq 0 ]; then
+      echo "OK    player (A2DP link verified)"
+      printf '%-34s ' "app (uploader)"
+      out="$("$CLI" compile --fqbn "$FQBN" --warnings none \
+              --build-property "compiler.cpp.extra_flags=-DCYD_UPLOADER" \
+              --build-property "compiler.c.extra_flags=-DCYD_UPLOADER" \
+              --build-path "$ROOT/app/build/uploader-cache" "$sketch" 2>&1)"
+      result=$?
+    fi
+  fi
+  if [ "$result" -eq 0 ]; then
     # Pull the flash/RAM line out of the noise so regressions in size show up.
     usage="$(echo "$out" | grep -m1 'Sketch uses' | sed 's/Sketch uses //; s/ bytes.*(\([0-9]*%\)).*/ B flash (\1)/')"
     echo "OK    $usage"
     pass=$((pass + 1))
   else
     echo "FAIL"
-    echo "$out" | grep -E 'error:|#error|#warning' | head -8 | sed 's/^/    /'
+    echo "$out" | grep -E 'error:|#error|#warning|A2DP verification FAILED' | head -8 | sed 's/^/    /'
     fail=$((fail + 1))
     failed_list+=("$sketch")
   fi
