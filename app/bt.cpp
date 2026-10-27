@@ -8,6 +8,16 @@
 #include "BluetoothA2DPSource.h"
 #include <esp_attr.h>
 #include <esp_gap_bt_api.h>
+#include <esp_heap_caps.h>
+#include "bt_feed_stats.h"
+
+static BtFeedStats feedStats;
+static void failedAllocation(size_t size, uint32_t caps, const char*) {
+  const unsigned core = xPortGetCoreID();
+  const UBaseType_t mask = portSET_INTERRUPT_MASK_FROM_ISR();
+  feedStats.allocationFailed(size, caps, core);
+  portCLEAR_INTERRUPT_MASK_FROM_ISR(mask);
+}
 
 // ---------------------------------------------------------------------------
 // The library, with two things it does not offer on its own
@@ -27,6 +37,7 @@
 //    just said "connecting" forever.
 static volatile uint32_t codecSerial = 0, codecHz = 0, codecType = 0xff;
 static volatile uint32_t btAudioSerial = 0, btAudioState = 0;
+static volatile uint32_t powerEvents = 0, powerMode = 0xff, powerInterval = 0;
 
 class CydSource : public BluetoothA2DPSource {
  public:
@@ -166,6 +177,11 @@ static volatile uint32_t  passkey = 0;
 // Bluetooth task: pairing events the library only logs.
 void CydSource::app_gap_callback(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t* param) {
   switch (event) {
+    case ESP_BT_GAP_MODE_CHG_EVT:
+      powerMode = param->mode_chg.mode;
+      powerInterval = param->mode_chg.interval;
+      ++powerEvents;
+      break;
     case ESP_BT_GAP_KEY_NOTIF_EVT:
       passkey = param->key_notif.passkey;
       Serial.printf("bt: passkey %06u -- confirm it on the device\n", param->key_notif.passkey);
@@ -309,19 +325,27 @@ static void handleSpeakerKey(uint8_t key) {
 // Frame is {int16_t channel1, channel2}, packed: the interleaved layout
 // audio_pull fills.
 static int32_t onData(Frame* frames, int32_t count) {
+  if (!frames || count <= 0) return 0;
+  const uint32_t started = micros();
+  feedStats.pull(started, count);
   // Only one consumer may pull from the ring (speaker.h). When the owner has
   // routed audio to the on-board speaker the link stays up and carries
   // silence: tearing the A2DP stack down and back up for a menu tap is a far
   // bigger risk than 44 KB/s of zeroes.
   if (speaker_route() != OUT_BT) {
     memset(frames, 0, count * sizeof(Frame));
+    feedStats.work(micros() - started);
     return count;
   }
   audio_pull((int16_t*)frames, count);
+  feedStats.work(micros() - started);
   return count;
 }
 
 void bt_begin() {
+  // Register before the stack starts. This hook must never log or inspect heap.
+  const esp_err_t hook = heap_caps_register_failed_alloc_callback(failedAllocation);
+  Serial.printf("bt-probe: allocation hook=%d; callback groups use >=5000us gaps\n", hook);
   pairingBoot = (rtcPairing == PAIRING_MAGIC);
   rtcPairing = 0;
 
@@ -382,6 +406,23 @@ static void remember(const uint8_t addr[6], const char* name) {
 }
 
 void bt_tick() {
+  static uint32_t lastFeedStat = 0;
+  static BtFeedStats::Snapshot previous{};
+  const uint32_t feedNow = millis(), feedDt = feedNow - lastFeedStat;
+  if (feedDt >= 5000) {
+    const auto s = feedStats.snapshot();
+    Serial.printf("bt-feed: dt=%lu fps=%lu calls=%lu groups=%lu g7=%lu g10=%lu g11=%lu other=%lu gap_max_us=%lu work_max_us=%lu\n",
+      feedDt, uint32_t(uint64_t(s.frames-previous.frames)*1000/feedDt), s.calls-previous.calls,
+      s.bursts-previous.bursts, s.seven-previous.seven, s.ten-previous.ten, s.eleven-previous.eleven,
+      s.other-previous.other, s.maxGapUs, s.maxWorkUs);
+    Serial.printf("bt-heap: fail=%lu fail4112=%lu total4112=%lu sample_size=%lu caps=0x%lx free=%u largest=%u\n",
+      s.failures-previous.failures, s.packetFailures-previous.packetFailures, s.packetFailures,
+      s.lastSize, s.lastCaps, heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+      heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+    Serial.printf("bt-link: power_mode=%lu interval_slots=%lu events=%lu (255=not reported)\n",
+      powerMode, powerInterval, powerEvents);
+    lastFeedStat=feedNow; previous=s;
+  }
   static uint32_t seenCodec = 0, seenAudio = 0;
   if (seenCodec != codecSerial || seenAudio != btAudioSerial) {
     seenCodec = codecSerial; seenAudio = btAudioSerial;

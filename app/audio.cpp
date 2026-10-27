@@ -57,6 +57,8 @@ static volatile uint32_t pullCalls = 0, pullMaxGapUs = 0, pullMaxWorkUs = 0;
 static uint32_t previousPullUs = 0;
 static volatile uint32_t pullGaps20 = 0, pullGaps50 = 0;
 static volatile bool drainShort = false;
+static volatile uint32_t flushCalls = 0, flushFallbacks = 0, flushMaxMs = 0;
+static volatile uint32_t lastOpenMs = 0, lastSeekMs = 0;
 
 static volatile int32_t maxRequest = 0;
 
@@ -220,16 +222,20 @@ static uint32_t computeDuration(File& f) {
 }
 
 static void requestFlush() {
+  const uint32_t began = millis(); ++flushCalls;
   // If Bluetooth is not pulling (not connected), nothing else touches rbTail.
   if (millis() - lastPullMs < 200) {
     flushReq = true;
     for (int i = 0; i < 50 && flushReq; i++) vTaskDelay(pdMS_TO_TICKS(4));
   }
   if (flushReq || millis() - lastPullMs >= 200) {
+    ++flushFallbacks;
     rbTail = rbHead;
     framesPlayed = 0;
     flushReq = false;
   }
+  const uint32_t took = millis() - began;
+  if (took > flushMaxMs) flushMaxMs = took;
 }
 
 static bool resetDecoder() {
@@ -275,7 +281,14 @@ static uint32_t alignToFrame(uint32_t pos) {
   return pos;          // nothing convincing nearby: let the decoder look further
 }
 
+// Decode-task scope timing, including failure paths. No callback changes.
+struct TransitionTimer {
+  volatile uint32_t& result; uint32_t began;
+  explicit TransitionTimer(volatile uint32_t& r): result(r), began(millis()) {}
+  ~TransitionTimer() { result = millis() - began; }
+};
 static bool openTrack(int index, uint32_t startMs) {
+  TransitionTimer timing(lastOpenMs);
   const int count = storage_trackCount();
   if (count == 0) return false;
   index = ((index % count) + count) % count;
@@ -308,6 +321,7 @@ static bool openTrack(int index, uint32_t startMs) {
 }
 
 static void seekTo(uint32_t ms) {
+  TransitionTimer timing(lastSeekMs);
   if (!file) return;
   if (durationMs > 1000) ms = min(ms, durationMs - 1000);
   starting = true; drainShort = false;
@@ -476,6 +490,8 @@ void audio_tick() {
       z-silence, pc-calls, w-wait, resetCount, pcmErrors, playing, starting);
     Serial.printf("timing: lifetime pull_gap_us=%lu pull_work_us=%lu decode_write_ms=%lu gaps20=%lu gaps50=%lu (maxima lifetime; write includes ring wait)\n",
       pullMaxGapUs, pullMaxWorkUs, writeMaxMs, pullGaps20-gaps20, pullGaps50-gaps50);
+    Serial.printf("transition: track_serial=%lu flushes=%lu fallback=%lu flush_max_ms=%lu open_ms=%lu seek_ms=%lu\n",
+      trackSerial, flushCalls, flushFallbacks, flushMaxMs, lastOpenMs, lastSeekMs);
     gaps20=pullGaps20; gaps50=pullGaps50;
     last=now; gen=g; src=sf; media=su; req=r; used=c; silence=z; calls=pc; wait=w;
   }

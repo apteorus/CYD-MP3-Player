@@ -24,9 +24,9 @@
 
 // One version for both images; tools/make_release.sh names the file after it.
 #if CYD_BOARD == CYD_BOARD_LCDWIKI_E32R28T
-#define FIRMWARE_VERSION "1.2.0-chonkpod-e32r28t-media4"
+#define FIRMWARE_VERSION "1.2.0-chonkpod-e32r28t-media4-btprobe1"
 #else
-#define FIRMWARE_VERSION "1.2.0-chonkpod-media4"
+#define FIRMWARE_VERSION "1.2.0-chonkpod-media4-btprobe1"
 #endif
 
 // Is the other image flashed and valid? False when only the player was
